@@ -1,0 +1,13 @@
+Weave Checks
+Copyright 2026 Weave
+
+This product includes software developed at Weave (https://github.com/weave-os).
+
+Portions of this product are adapted from Continue Checks
+(https://github.com/continuedev/checks), licensed under the Apache License,
+Version 2.0:
+
+    Copyright 2025 Continue Dev, Inc.
+
+The per-concern Markdown check format, the division of labour between linters,
+tests, and checks, and the overall review design derive from that project.
