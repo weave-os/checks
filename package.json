@@ -1,0 +1,19 @@
+{
+  "name": "@weave-os/checks",
+  "version": "0.1.0",
+  "description": "Advisory, per-concern AI code review for pull requests, driven by Markdown check files.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/weave-os/checks.git"
+  },
+  "homepage": "https://github.com/weave-os/checks#readme",
+  "bugs": "https://github.com/weave-os/checks/issues",
+  "engines": {
+    "node": ">=20.3"
+  },
+  "scripts": {
+    "test": "node --test src/*.test.mjs"
+  }
+}

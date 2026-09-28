@@ -1,0 +1,3 @@
+# Fixture ignore list.
+vendor/
+generated/api/*.pb.go
