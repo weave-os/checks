@@ -9,12 +9,13 @@
 // the action does not offer this provider.
 
 import { CLIENT_COST_LABEL, clientReportedCost } from "./client-cost.mjs";
+import { COORDINATOR_ONLY_ENV } from "./secrets.mjs";
 
 export function inheritProvider() {
   return Object.freeze({
     id: "inherit",
     costLabel: CLIENT_COST_LABEL,
-    dropEnv: [],
+    dropEnv: [...COORDINATOR_ONLY_ENV],
     envFor: () => ({}),
     resolveCost: ({ resultEvent }) => clientReportedCost(resultEvent),
   });

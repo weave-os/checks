@@ -229,7 +229,7 @@ describe("runChecks", () => {
     const [first, second] = summary.checks;
     assert.equal(first.slug, "first-check");
     assert.equal(first.name, "First Check");
-    assert.equal(first.outcome, OUTCOME.FAIL);
+    assert.equal(first.outcome, "flagged");
     assert.deepEqual(first.suggestions, [
       {
         file: "app/main.go",
@@ -248,7 +248,7 @@ describe("runChecks", () => {
 
     assert.deepEqual(summary.totals, {
       pass: 1,
-      fail: 1,
+      flagged: 1,
       neutral: 0,
       cost: 0.07,
       durationMs: 4200,

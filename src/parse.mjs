@@ -42,6 +42,10 @@ export const SUPPORTED_CLUSTERS = new Set([
   CLUSTER_MAXIMUM,
 ]);
 
+// Files in a checks directory that are documentation, not checks, unless a
+// policy names its own (`docFiles`).
+export const DEFAULT_DOC_FILES = new Set(["README.md"]);
+
 // Validation policy for a check's `model` and `cluster` frontmatter.
 //
 //   allowedModels  -- Set of exact model strings, or null to accept any
@@ -53,6 +57,8 @@ export const SUPPORTED_CLUSTERS = new Set([
 //                     CLI's own default model serves it.
 //   requireCluster -- a check with no `cluster` fails discovery.
 //   defaultModel   -- model applied to a check that declares none.
+//   docFiles       -- Set of Markdown filenames in the checks directory that
+//                     are documentation, not checks.
 //
 // WEAVE_POLICY is today's strict Weave Router contract and the default for
 // buildMatrix()/parseCheckFile() so existing callers keep their behaviour.
@@ -63,6 +69,7 @@ export const WEAVE_POLICY = Object.freeze({
   requireModel: true,
   requireCluster: true,
   defaultModel: null,
+  docFiles: DEFAULT_DOC_FILES,
 });
 
 export const GENERIC_POLICY = Object.freeze({
@@ -71,6 +78,7 @@ export const GENERIC_POLICY = Object.freeze({
   requireModel: false,
   requireCluster: false,
   defaultModel: null,
+  docFiles: DEFAULT_DOC_FILES,
 });
 
 // Model names travel to the CLI as one `--model` argument and, under Weave
@@ -86,9 +94,6 @@ const CLUSTER_NAME = /^[a-z0-9][a-z0-9-]*$/;
 // marker and matched back by history.mjs's marker regex. A slug outside this
 // vocabulary would post comments the next run can never recognize.
 export const SLUG_PATTERN = /^[a-z0-9-]+$/;
-
-// Files in a checks directory that are documentation, not checks.
-const NON_CHECK_FILES = new Set(["README.md"]);
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 
@@ -138,9 +143,9 @@ export function slugFromPath(filePath) {
   return filePath.slice(filePath.lastIndexOf("/") + 1).replace(/\.md$/, "");
 }
 
-export function isCheckFile(filePath) {
+export function isCheckFile(filePath, docFiles = DEFAULT_DOC_FILES) {
   const base = filePath.slice(filePath.lastIndexOf("/") + 1);
-  return base.endsWith(".md") && !NON_CHECK_FILES.has(base);
+  return base.endsWith(".md") && !docFiles.has(base);
 }
 
 // Optional file inside the checks directory listing paths the review never
@@ -315,7 +320,7 @@ function validateCluster(cluster, filePath, policy) {
 // string or null.
 export function buildMatrix(files, policy = WEAVE_POLICY, validateCheck = null) {
   const checks = files
-    .filter((file) => isCheckFile(file.path))
+    .filter((file) => isCheckFile(file.path, policy.docFiles ?? DEFAULT_DOC_FILES))
     .map((file) => parseCheckFile(file.text, file.path, policy))
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
@@ -348,6 +353,7 @@ export function policyFrom({
   requireModel = false,
   requireCluster = false,
   defaultModel = null,
+  docFiles = [],
 } = {}) {
   const asSet = (values) => (values.length === 0 ? null : new Set(values));
   const policy = {
@@ -356,6 +362,7 @@ export function policyFrom({
     requireModel,
     requireCluster,
     defaultModel: defaultModel || null,
+    docFiles: asSet(docFiles) ?? DEFAULT_DOC_FILES,
   };
   if (policy.defaultModel !== null) {
     validateModel(policy.defaultModel, "default model", policy);
@@ -596,6 +603,20 @@ export const OUTCOME = Object.freeze({
   PASS: "pass",
   FAIL: "fail",
 });
+
+// The outcome names published in JSON results and action outputs. Internally
+// a FAIL verdict is OUTCOME.FAIL, but it never publishes as a failed check
+// (see worker.mjs's header), so the public vocabulary says what it is: the
+// check flagged something.
+export const PUBLIC_OUTCOME = Object.freeze({
+  [OUTCOME.PASS]: "pass",
+  [OUTCOME.FAIL]: "flagged",
+  [OUTCOME.NEUTRAL]: "neutral",
+});
+
+export function publicOutcome(outcome) {
+  return PUBLIC_OUTCOME[outcome] ?? PUBLIC_OUTCOME[OUTCOME.NEUTRAL];
+}
 
 // "Every check on this sha finished a review." Written by the worker onto the
 // aggregate check run's external_id, read back by the workflow before it

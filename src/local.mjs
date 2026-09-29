@@ -25,14 +25,17 @@
 //     "checks": [ { slug, name, model, cluster, outcome, reason, error,
 //                   suggestions: [...], proseFallbacks: [...], rejected: [...],
 //                   cost, durationMs } ],
-//     "totals": { pass, fail, neutral, cost, durationMs } }
+//     "totals": { pass, flagged, neutral, cost, durationMs } }
+//
+// `outcome` is "pass", "flagged" (the check found something), or "neutral"
+// (it could not reach a verdict).
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { OUTCOME, RESULT_SCHEMA, parseAddedLines } from "./parse.mjs";
+import { OUTCOME, RESULT_SCHEMA, parseAddedLines, publicOutcome } from "./parse.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 import {
   evaluateCheck,
@@ -182,7 +185,7 @@ function summarizeCheck(check, checkResult) {
     name: check.name,
     model: check.model,
     cluster: check.cluster,
-    outcome: checkResult.outcome,
+    outcome: publicOutcome(checkResult.outcome),
     reason: checkResult.reason ?? null,
     error: checkResult.error ?? null,
     suggestions: (checkResult.accepted ?? []).map((suggestion) => ({
@@ -207,12 +210,13 @@ function summarizeCheck(check, checkResult) {
   };
 }
 
+// Tallies summarized checks, whose `outcome` is already the public name.
 function checkTotalsFor(checkResults) {
   const count = (outcome) =>
-    checkResults.filter((checkResult) => checkResult.outcome === outcome).length;
+    checkResults.filter((checkResult) => checkResult.outcome === publicOutcome(outcome)).length;
   return {
     pass: count(OUTCOME.PASS),
-    fail: count(OUTCOME.FAIL),
+    flagged: count(OUTCOME.FAIL),
     neutral: count(OUTCOME.NEUTRAL),
     cost: totalCost(checkResults.map((checkResult) => checkResult.cost)),
     durationMs: totalDuration(checkResults.map((checkResult) => checkResult.durationMs)),

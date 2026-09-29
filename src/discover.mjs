@@ -14,22 +14,26 @@ import { WEAVE_POLICY, buildMatrix, isCheckFile } from "./parse.mjs";
 
 export const DEFAULT_CHECKS_DIR = ".weave-checks";
 
-// Reads and validates every check in `checksDir`. `checksDir` is recorded in
-// each entry's `path` as given, so a repo-relative directory yields
-// repo-relative paths the runner can join onto the repo root.
-export function discoverChecks(checksDir, { policy = WEAVE_POLICY, validateCheck = null } = {}) {
+// Reads and validates every check in `checksDir`, resolved against `repoDir`.
+// `checksDir` is recorded in each entry's `path` as given, so a repo-relative
+// directory yields repo-relative paths the runner can join onto the repo root.
+export function discoverChecks(
+  checksDir,
+  { repoDir = ".", policy = WEAVE_POLICY, validateCheck = null } = {},
+) {
+  const dir = path.resolve(repoDir, checksDir);
   let entries;
   try {
-    entries = fs.readdirSync(checksDir);
+    entries = fs.readdirSync(dir);
   } catch (err) {
     throw new Error(`failed to read ${checksDir}: ${err.message}`);
   }
   const files = entries
-    .filter((name) => isCheckFile(name))
+    .filter((name) => isCheckFile(name, policy.docFiles))
     .sort()
     .map((name) => ({
       path: path.posix.join(checksDir.split(path.sep).join("/"), name),
-      text: fs.readFileSync(path.join(checksDir, name), "utf8"),
+      text: fs.readFileSync(path.join(dir, name), "utf8"),
     }));
   const matrix = buildMatrix(files, policy, validateCheck);
   if (matrix.length === 0) {

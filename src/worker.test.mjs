@@ -64,6 +64,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
       FULL_DIFF_PATH: write("pr.full.diff", diff),
       FULL_STAT_PATH: write("pr.stat.full", " app/main.go | 2 ++"),
       WEAVE_CHECKS_DIR: "checks",
+      RESULTS_PATH: path.join(root, "results.json"),
       ...overrides,
     },
   };
@@ -225,6 +226,10 @@ describe("runWorker", () => {
     assert.equal(final.conclusion, "neutral");
     assert.equal(final.external_id, `reviewed:${HEAD_SHA}`);
     assert.match(final.output.title, /^Acme Reviews: 1 pass · 1 flagged/);
+    const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
+    assert.deepEqual(results.totals, { pass: 1, flagged: 1, neutral: 0, cost: 0.03, durationMs: 300 });
+    assert.deepEqual(results.checks.map((c) => c.outcome), ["flagged", "pass"]);
+    assert.equal(results.aggregateCheckRunId, "1000");
   });
 
   it("does not mark the head reviewed when a check was an operational miss", async () => {
@@ -367,5 +372,6 @@ describe("runWorker", () => {
 
     assert.equal(outcome.ok, false);
     assert.equal(existsSync(env.COMPLETE_PATH), false);
+    assert.equal(existsSync(env.RESULTS_PATH), false);
   });
 });

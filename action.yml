@@ -1,0 +1,290 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Weave Checks
+description: Advisory, per-concern AI review of pull requests, driven by Markdown check files in your repository.
+author: Weave
+branding:
+  icon: check-square
+  color: purple
+
+# Composite actions cannot grant permissions or read the caller's secrets.
+# The calling job must grant `checks: write`, `pull-requests: write`, and
+# `contents: read`, and pass every credential below explicitly as an input.
+inputs:
+  github-token:
+    description: Token for check runs, reviews, and review threads. Needs checks:write and pull-requests:write.
+    default: ${{ github.token }}
+  provider:
+    description: "Who serves the agents' requests: anthropic (direct Anthropic or any Anthropic-compatible endpoint) or weave-router."
+    default: anthropic
+  anthropic-api-key:
+    description: Anthropic API key (provider anthropic). Not needed with claude-code-oauth-token or a provider-env gateway that authenticates itself.
+    default: ""
+  claude-code-oauth-token:
+    description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key.
+    default: ""
+  weave-router-key:
+    description: Weave Router key (provider weave-router). Required in that mode.
+    default: ""
+  weave-api-key:
+    description: Weave API key used to read each session's billed cost (provider weave-router). Required in that mode.
+    default: ""
+  provider-env:
+    description: >-
+      Extra environment for the Claude CLI, one KEY=VALUE per line (provider anthropic), e.g.
+      ANTHROPIC_BASE_URL for a gateway, CLAUDE_CODE_USE_BEDROCK=1, or ANTHROPIC_CUSTOM_HEADERS
+      (repeat the key for more than one header). Applied last, so it overrides everything else.
+    default: ""
+  checks-dir:
+    description: Directory of check files, relative to the repository root.
+    default: .weave-checks
+  doc-files:
+    description: Comma-separated Markdown files in checks-dir that are documentation, not checks.
+    default: README.md
+  allowed-models:
+    description: Comma-separated allowlist for a check's `model`. Empty accepts any well-formed model name.
+    default: ""
+  allowed-clusters:
+    description: Comma-separated allowlist for a check's `cluster`. Empty accepts any well-formed cluster name.
+    default: ""
+  require-cluster:
+    description: Fail discovery for a check with no `cluster`. Always on for provider weave-router.
+    default: "false"
+  default-model:
+    description: Model for a check that declares none. Empty uses the Claude CLI's own default.
+    default: ""
+  dedup-model:
+    description: Model for the duplicate-finding judge.
+    default: claude-haiku-4-5
+  dedup-cluster:
+    description: Cluster for the duplicate-finding judge (provider weave-router).
+    default: low
+  concurrency:
+    description: Checks run at once.
+    default: "4"
+  review-budget:
+    description: Per-check USD ceiling for the main review, enforced by the Claude CLI against its own estimate.
+    default: "2"
+  resolution-budget:
+    description: Per-check USD ceiling for the resolution judge.
+    default: "1"
+  dedup-budget:
+    description: Per-check USD ceiling for the duplicate judge.
+    default: "0.5"
+  review-event:
+    description: Review event findings are posted under, COMMENT or REQUEST_CHANGES.
+    default: COMMENT
+  inline-comments:
+    description: Post findings as inline review comments. When false, findings are listed on each check run's summary instead.
+    default: "true"
+  resolution-judge:
+    description: Resolve this check's earlier review threads once they no longer apply.
+    default: "true"
+  dedup-judge:
+    description: Drop new findings that duplicate an earlier comment by the same check.
+    default: "true"
+  diff-base:
+    description: incremental (review only what changed since the last fully reviewed commit) or merge-base (always review the whole PR).
+    default: incremental
+  node-version:
+    description: Node.js version for the action's own scripts.
+    default: "22"
+  claude-code-version:
+    description: "@anthropic-ai/claude-code version to install. Pin it for reproducible reviews."
+    default: latest
+  checkout:
+    description: Check out the PR merge commit. Set to false if the job already checked out the PR (merge commit or head).
+    default: "true"
+  fail-on-findings:
+    description: Fail the job when any check flags findings. Check runs themselves are never marked failed.
+    default: "false"
+  upload-diagnostics:
+    description: Upload prompts, transcripts, and results as a workflow artifact. They contain your diff and the agents' full output.
+    default: "false"
+  product-name:
+    description: Name for one check in agent prompts.
+    default: Weave Check
+  check-run-prefix:
+    description: 'Prefix of each check run''s name: "<prefix> / <check name>".'
+    default: Weave Check
+  aggregate-name:
+    description: Name of the aggregate check run.
+    default: Weave Checks
+  marker-prefix:
+    description: Prefix of the hidden marker on every comment. Existing weave-check markers are always recognized too.
+    default: weave-check
+
+outputs:
+  aggregate-check-run-id:
+    description: ID of the aggregate check run.
+    value: ${{ steps.aggregate.outputs.id }}
+  pass:
+    description: Checks that passed.
+    value: ${{ steps.report.outputs.pass }}
+  flagged:
+    description: Checks that flagged findings.
+    value: ${{ steps.report.outputs.flagged }}
+  neutral:
+    description: Checks that could not reach a verdict.
+    value: ${{ steps.report.outputs.neutral }}
+  total-cost:
+    description: Total USD cost, empty when any check's cost is unknown. Router-billed under weave-router, the CLI's client-reported estimate otherwise.
+    value: ${{ steps.report.outputs.total-cost }}
+  review-base:
+    description: Commit the review diff started from.
+    value: ${{ steps.prepare.outputs.review-base }}
+  summary-path:
+    description: Path to the Markdown status table.
+    value: ${{ steps.report.outputs.summary-path }}
+  results-path:
+    description: Path to the JSON results.
+    value: ${{ steps.report.outputs.results-path }}
+
+runs:
+  using: composite
+  steps:
+    # Only the action's own files exist yet, under github.action_path. Every
+    # value below reaches a script through `env`, never interpolated into the
+    # script text, so no input can inject shell.
+    - name: Set up Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        # Nothing to cache: the action has no dependencies, and the consumer's
+        # repository is not checked out yet.
+        package-manager-cache: false
+
+    # Before checkout, so the always() cleanup below can close it even if
+    # checkout or preparation fails, instead of leaving a required check
+    # pending forever.
+    - name: Create aggregate check run
+      id: aggregate
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WEAVE_CHECKS_GITHUB_TOKEN: ${{ inputs.github-token }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        WEAVE_CHECKS_AGGREGATE_NAME: ${{ inputs.aggregate-name }}
+      run: |
+        if [ -z "${HEAD_SHA}" ]; then
+          echo "::error::Weave Checks runs on pull_request events only."
+          exit 1
+        fi
+        node "${ACTION_PATH}/bin/cli.mjs" create-aggregate
+
+    # The merge commit gives the agents a tree with the base branch's latest
+    # code; depth 2 makes its PR-head parent available for verification. The
+    # diffs themselves name explicit SHAs and fetch what they need.
+    - name: Check out the PR merge commit
+      if: inputs.checkout == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 2
+        # Agents read untrusted PR content, and their read-only tools can
+        # still read files. Nothing is left on disk to find: preparation
+        # authenticates its own fetches from the token in its environment.
+        persist-credentials: false
+
+    - name: Install Claude Code CLI
+      shell: bash
+      env:
+        CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
+      run: npm install --global --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+    - name: Prepare diffs and discover checks
+      id: prepare
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WEAVE_CHECKS_GITHUB_TOKEN: ${{ inputs.github-token }}
+        REPO_DIR: ${{ github.workspace }}
+        WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        WEAVE_CHECKS_DIR: ${{ inputs.checks-dir }}
+        WEAVE_CHECKS_DOC_FILES: ${{ inputs.doc-files }}
+        WEAVE_CHECKS_PROVIDER: ${{ inputs.provider }}
+        WEAVE_CHECKS_ALLOWED_MODELS: ${{ inputs.allowed-models }}
+        WEAVE_CHECKS_ALLOWED_CLUSTERS: ${{ inputs.allowed-clusters }}
+        WEAVE_CHECKS_REQUIRE_CLUSTER: ${{ inputs.require-cluster }}
+        WEAVE_CHECKS_DEFAULT_MODEL: ${{ inputs.default-model }}
+        WEAVE_CHECKS_DIFF_BASE: ${{ inputs.diff-base }}
+        WEAVE_CHECKS_AGGREGATE_NAME: ${{ inputs.aggregate-name }}
+      run: node "${ACTION_PATH}/bin/cli.mjs" prepare
+
+    - name: Run checks
+      id: worker
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO_DIR: ${{ github.workspace }}
+        MATRIX_PATH: ${{ runner.temp }}/weave-checks/matrix.json
+        DIFF_PATH: ${{ runner.temp }}/weave-checks/pr.diff
+        STAT_PATH: ${{ runner.temp }}/weave-checks/pr.stat
+        FULL_DIFF_PATH: ${{ runner.temp }}/weave-checks/pr.full.diff
+        FULL_STAT_PATH: ${{ runner.temp }}/weave-checks/pr.stat.full
+        WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
+        SUMMARY_PATH: ${{ runner.temp }}/weave-checks/summary.md
+        COMPLETE_PATH: ${{ runner.temp }}/weave-checks/complete
+        RESULTS_PATH: ${{ runner.temp }}/weave-checks/results.json
+        MASTER_CHECK_RUN_ID: ${{ steps.aggregate.outputs.id }}
+        WEAVE_CHECKS_GITHUB_TOKEN: ${{ inputs.github-token }}
+        WEAVE_CHECKS_PROVIDER: ${{ inputs.provider }}
+        WEAVE_CHECKS_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
+        WEAVE_ROUTER_KEY: ${{ inputs.weave-router-key }}
+        WEAVE_API_KEY: ${{ inputs.weave-api-key }}
+        WEAVE_CHECKS_PROVIDER_ENV: ${{ inputs.provider-env }}
+        WEAVE_CHECKS_DIR: ${{ inputs.checks-dir }}
+        WEAVE_CHECKS_DEDUP_MODEL: ${{ inputs.dedup-model }}
+        WEAVE_CHECKS_DEDUP_CLUSTER: ${{ inputs.dedup-cluster }}
+        WEAVE_CHECK_PARALLEL: ${{ inputs.concurrency }}
+        WEAVE_CHECKS_REVIEW_BUDGET: ${{ inputs.review-budget }}
+        WEAVE_CHECKS_RESOLUTION_BUDGET: ${{ inputs.resolution-budget }}
+        WEAVE_CHECKS_DEDUP_BUDGET: ${{ inputs.dedup-budget }}
+        WEAVE_CHECKS_REVIEW_EVENT: ${{ inputs.review-event }}
+        WEAVE_CHECKS_INLINE_COMMENTS: ${{ inputs.inline-comments }}
+        WEAVE_CHECKS_RESOLUTION_JUDGE: ${{ inputs.resolution-judge }}
+        WEAVE_CHECKS_DEDUP_JUDGE: ${{ inputs.dedup-judge }}
+        WEAVE_CHECKS_PRODUCT_NAME: ${{ inputs.product-name }}
+        WEAVE_CHECKS_CHECK_RUN_PREFIX: ${{ inputs.check-run-prefix }}
+        WEAVE_CHECKS_AGGREGATE_NAME: ${{ inputs.aggregate-name }}
+        WEAVE_CHECKS_MARKER_PREFIX: ${{ inputs.marker-prefix }}
+      run: node "${ACTION_PATH}/src/worker.mjs"
+
+    - name: Upload diagnostics
+      if: always() && inputs.upload-diagnostics == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: weave-checks-diagnostics
+        retention-days: 7
+        if-no-files-found: warn
+        path: ${{ runner.temp }}/weave-checks
+
+    # Always, whatever failed above: write the step summary, then close the
+    # aggregate neutral unless the worker already closed it.
+    - name: Close aggregate check run
+      if: always() && steps.aggregate.outputs.id != ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WEAVE_CHECKS_GITHUB_TOKEN: ${{ inputs.github-token }}
+        WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
+        CHECK_RUN_ID: ${{ steps.aggregate.outputs.id }}
+        WEAVE_CHECKS_AGGREGATE_NAME: ${{ inputs.aggregate-name }}
+      run: node "${ACTION_PATH}/bin/cli.mjs" close-aggregate
+
+    # Findings leave every check run success or neutral; this step is the
+    # only place they can fail the job, and only when asked to.
+    - name: Report results
+      id: report
+      if: always() && steps.aggregate.outputs.id != ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
+        WEAVE_CHECKS_FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+      run: node "${ACTION_PATH}/bin/cli.mjs" report

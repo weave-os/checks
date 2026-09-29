@@ -72,7 +72,30 @@ describe("createProvider", () => {
     });
     assert.equal(provider.id, "anthropic");
     assert.deepEqual(provider.envFor({ cluster: "low" }), { ANTHROPIC_BASE_URL: "https://gw.example.com" });
-    assert.deepEqual(provider.dropEnv, []);
+  });
+
+  it("re-exports the action's credential inputs under the CLI's names, only when set", () => {
+    const withKey = createProvider(PROVIDER.ANTHROPIC, {
+      env: { WEAVE_CHECKS_ANTHROPIC_API_KEY: "sk-test", WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: "" },
+    });
+    assert.deepEqual(withKey.envFor({}), { ANTHROPIC_API_KEY: "sk-test" });
+    const withToken = createProvider(PROVIDER.ANTHROPIC, { env: { WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: "oat" } });
+    assert.deepEqual(withToken.envFor({}), { CLAUDE_CODE_OAUTH_TOKEN: "oat" });
+  });
+
+  // An agent reads untrusted PR content; nothing only the coordinator needs
+  // may reach its environment, under any provider.
+  it("keeps coordinator-only secrets out of every provider's child", () => {
+    const providers = [
+      createProvider(PROVIDER.ANTHROPIC),
+      createProvider(PROVIDER.INHERIT),
+      createProvider(PROVIDER.WEAVE_ROUTER, { env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" } }),
+    ];
+    for (const provider of providers) {
+      for (const name of ["WEAVE_CHECKS_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "WEAVE_API_KEY", "WEAVE_ROUTER_KEY", "WEAVE_CHECKS_ANTHROPIC_API_KEY"]) {
+        assert.ok(provider.dropEnv.includes(name), `${provider.id} must drop ${name}`);
+      }
+    }
   });
 
   it("builds inherit with no overlay", () => {

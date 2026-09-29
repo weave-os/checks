@@ -69,7 +69,11 @@ export function parseProviderEnv(text) {
 export function createProvider(name, { env = {}, providerEnv = {} } = {}) {
   switch (name) {
     case PROVIDER.ANTHROPIC:
-      return anthropicProvider({ env: providerEnv });
+      return anthropicProvider({
+        env: providerEnv,
+        apiKey: env.WEAVE_CHECKS_ANTHROPIC_API_KEY,
+        oauthToken: env.WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN,
+      });
     case PROVIDER.WEAVE_ROUTER:
       return weaveRouterProvider({
         routerKey: env[ROUTER_KEY_ENV],

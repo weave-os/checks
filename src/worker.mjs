@@ -60,6 +60,7 @@ import {
   formatReviewComment,
   formatReviewedMarker,
   parseAddedLines,
+  publicOutcome,
 } from "./parse.mjs";
 import {
   extractThreadsPage,
@@ -152,6 +153,9 @@ export function readWorkerConfig(env) {
     prNumber: required("PR_NUMBER"),
     summaryPath: required("SUMMARY_PATH"),
     completePath: required("COMPLETE_PATH"),
+    // Optional: where to write the machine-readable results the action turns
+    // into its outputs (see writeResults below).
+    resultsPath: env.RESULTS_PATH || null,
     // The action always creates the aggregate before this script starts, so
     // there is exactly one to update and no need to look one up.
     masterCheckRunId: required("MASTER_CHECK_RUN_ID"),
@@ -1474,6 +1478,7 @@ export async function runWorker(config, deps = {}) {
             "so no check ran.",
         },
       });
+      writeResults([]);
       writeFileSync(COMPLETE_PATH, `${RUN_MARKER.NO_REVIEWABLE_CHANGES}\n`);
       return { ok: true, marker: RUN_MARKER.NO_REVIEWABLE_CHANGES };
     }
@@ -1495,6 +1500,7 @@ export async function runWorker(config, deps = {}) {
 
     await runQueuedChecks(rawThreadNodes);
     await updateMaster(true);
+    writeResults([...states.values()]);
     writeFileSync(COMPLETE_PATH, `${RUN_MARKER.COMPLETED}\n`);
     return { ok: true, marker: RUN_MARKER.COMPLETED, states: [...states.values()] };
   } catch (error) {
@@ -1529,6 +1535,37 @@ export async function runWorker(config, deps = {}) {
       writeFileSync(COMPLETE_PATH, `${RUN_MARKER.CRASHED}\n`);
     }
     return { ok: false, error };
+  }
+
+  // Writes RESULTS_PATH: one entry per check plus totals, in the public
+  // outcome vocabulary ("flagged", not "fail"). Written only for a pass that
+  // finished; a crashed pass leaves no results rather than partial ones.
+  function writeResults(finalStates) {
+    if (config.resultsPath === null) return;
+    const count = (outcome) => finalStates.filter((state) => state.outcome === outcome).length;
+    const results = {
+      provider: PROVIDER_IMPL.id,
+      costLabel: PROVIDER_IMPL.costLabel,
+      headSha: HEAD_SHA,
+      aggregateCheckRunId: MASTER_CHECK_RUN_ID,
+      checks: finalStates.map((state) => ({
+        slug: state.check.slug,
+        name: state.check.name,
+        outcome: publicOutcome(state.outcome),
+        checkRunId: state.checkRunId,
+        cost: state.cost ?? null,
+        durationMs: state.durationMs ?? null,
+        detail: state.note ?? null,
+      })),
+      totals: {
+        pass: count(OUTCOME.PASS),
+        flagged: count(OUTCOME.FAIL),
+        neutral: count(OUTCOME.NEUTRAL),
+        cost: totalCost(finalStates.map((state) => state.cost)),
+        durationMs: totalDuration(finalStates.map((state) => state.durationMs)),
+      },
+    };
+    writeFileSync(config.resultsPath, `${JSON.stringify(results, null, 2)}\n`);
   }
 
   // Summary for the top-level catch's closing PATCH. A coordinator error can

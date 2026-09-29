@@ -323,12 +323,9 @@ describe("weaveRouterProvider", () => {
   // already rides in a header; a direct Anthropic credential would compete
   // with the router placeholder.
   it("keeps both Weave secrets and direct Anthropic credentials out of the child", () => {
-    assert.deepEqual(provider().dropEnv, [
-      "WEAVE_ROUTER_KEY",
-      "WEAVE_API_KEY",
-      "ANTHROPIC_AUTH_TOKEN",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-    ]);
+    for (const name of ["WEAVE_ROUTER_KEY", "WEAVE_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+      assert.ok(provider().dropEnv.includes(name), name);
+    }
   });
 
   it("rejects a check with no cluster", () => {

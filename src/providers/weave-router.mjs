@@ -20,6 +20,8 @@
 // history.mjs, so the action can run it with bare `node` and so the retry
 // and error-mapping rules are unit testable (router.test.mjs).
 
+import { COORDINATOR_ONLY_ENV } from "./secrets.mjs";
+
 export const ROUTER_BASE_URL = "https://router.workweave.ai";
 export const WEAVE_API_BASE_URL = "https://app.workweave.ai/api/v1";
 const USD_MICROS_PER_USD = 1_000_000;
@@ -297,17 +299,13 @@ export function weaveRouterProvider({
   return Object.freeze({
     id: "weave-router",
     costLabel: "router cost",
-    // Neither secret is needed by the CLI child: the router key already rides
-    // in ANTHROPIC_CUSTOM_HEADERS, and the Weave API key is only for the
-    // coordinator's cost lookup. Any direct Anthropic credential is dropped
-    // too, so it cannot take precedence over the router placeholder and move
-    // a check onto per-API billing.
-    dropEnv: [
-      ROUTER_KEY_ENV,
-      WEAVE_API_KEY_ENV,
-      "ANTHROPIC_AUTH_TOKEN",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-    ],
+    // Neither Weave secret is needed by the CLI child: the router key already
+    // rides in ANTHROPIC_CUSTOM_HEADERS, and the Weave API key is only for
+    // the coordinator's cost lookup (both are in COORDINATOR_ONLY_ENV). Any
+    // direct Anthropic credential is dropped too, so it cannot take
+    // precedence over the router placeholder and move a check onto per-API
+    // billing.
+    dropEnv: [...COORDINATOR_ONLY_ENV, "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
     envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { baseUrl, userEmail }),
     resolveCost: ({ sessionId }) =>
       routerSessionCost(sessionId, weaveAPIKey, { apiBaseUrl, ...costOptions }),
