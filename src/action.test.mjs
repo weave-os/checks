@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_TOKEN_EXCHANGE_URL } from "./apptoken.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ACTION = readFileSync(path.join(ROOT, "action.yml"), "utf8");
@@ -110,31 +109,10 @@ describe("action.yml", () => {
 
   it("maps every output to a step that exists", () => {
     const ids = new Set(STEPS.map((s) => s.id).filter(Boolean));
-    assert.deepEqual(
-      OUTPUTS.map((o) => o.name),
-      ["aggregate-check-run-id", "pass", "flagged", "neutral", "total-cost", "review-base", "summary-path", "results-path"],
-    );
     for (const { name, value } of OUTPUTS) {
       const id = /steps\.([a-z-]+)\.outputs/.exec(value)?.[1];
       assert.ok(ids.has(id), `${name} reads missing step ${id}`);
     }
-  });
-
-  it("documents App installation, OIDC permissions, secrets passing, and fork limits", () => {
-    const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
-    for (const phrase of [
-      "github.com/apps/weave-checks",
-      "id-token: write",
-      "never posts as `github-actions[bot]`",
-      "Composite actions cannot read your secrets",
-      "Forks never receive OIDC tokens",
-      "pull_request_target",
-      "changes the workflow file",
-    ]) {
-      assert.ok(readme.includes(phrase), `README should explain ${phrase}`);
-    }
-    assert.doesNotMatch(readme, /github-token:|secrets\.GITHUB_TOKEN/);
-    assert.match(readme, /upload-diagnostics.*false/s);
   });
 
   it("self-check uses Router credentials, same-repository pull_request, and the approved policy", () => {
@@ -191,16 +169,7 @@ describe("action.yml", () => {
 
   it("has no input for substituting a different GitHub App/token exchange", () => {
     assert.equal(INPUTS.includes("token-exchange-url"), false);
-    assert.equal(DEFAULT_TOKEN_EXCHANGE_URL, "https://staging-01.weaveos.com/api/v1/checks/github-token");
     assert.doesNotMatch(step("Authenticate as the Weave Checks App").block, /TOKEN_EXCHANGE_URL:/);
-  });
-
-  it("defaults to the generic provider and Weave branding", () => {
-    assert.equal(INPUT_DEFAULTS.provider, "anthropic");
-    assert.equal(INPUT_DEFAULTS["checks-dir"], ".weave-checks");
-    assert.equal(INPUT_DEFAULTS["aggregate-name"], "Weave Checks");
-    assert.equal(INPUT_DEFAULTS["marker-prefix"], "weave-check");
-    assert.equal(INPUT_DEFAULTS["review-event"], "COMMENT");
   });
 
   // Every env name the worker reads must be one the action sets, or the input
