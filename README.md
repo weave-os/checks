@@ -4,7 +4,7 @@
 
 Advisory, per-concern code review for GitHub pull requests. Write one Markdown file for each review concern; Weave Checks runs a read-only agent against each check's criteria and the pull request's changed lines. Findings appear as review comments or on the check run. Operational misses stay neutral instead of masquerading as a pass or a finding.
 
-This repository contains the reusable GitHub Action, the `@weave-os/checks` local CLI/package, and a small set of generic starter checks. **Your check definitions remain in your repository**: the action does not impose a universal coding policy.
+This repository contains the reusable GitHub Action, the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**: the action does not impose a universal coding policy.
 
 > The generic starter-check corpus and per-concern review format adapt material and design from [Continue Checks](https://github.com/continuedev/checks), Copyright 2025 Continue Dev, Inc., Apache-2.0. See [`NOTICE`](NOTICE) for attribution and [`LICENSE`](LICENSE) for this package's license.
 
@@ -117,7 +117,7 @@ build/generated/*.go
 
 Blank lines and `#` comments are ignored. Unsafe patterns that can exclude the whole repository or escape its root fail discovery rather than silently disabling review.
 
-The 14 generic checks in [`starter-checks/`](starter-checks/) are examples to copy and adapt. They are not automatically imposed by the action. Starter checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
+The 11 generic checks in [`starter-checks/`](starter-checks/) are examples to copy and adapt. The additional checks in [`checks-library/`](checks-library/) target concerns that may make sense for some repositories but are not universal defaults; see its README before adopting any. Neither collection is automatically imposed by the action. Checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
 
 ## Local CLI
 
@@ -178,7 +178,7 @@ Other inputs configure concurrency, three budgets, review event, the dedup judge
 
 The npm package is `@weave-os/checks`. As in the Weave Router release flow, each release starts with a version-bump PR; merging does not publish by itself. Once the version change is on `main`, pushing a `checks-v<version>` tag starts the publisher. The tag must point to a commit reachable from `main` and match `package.json` exactly.
 
-The workflow verifies the tag/version and main ancestry, runs the tests, installs the packed tarball into a clean consumer directory and validates the bundled starter checks, then publishes with provenance. It uses npm trusted publishing (OIDC), with `id-token: write` limited to the publish job; no npm token is stored in GitHub.
+The workflow verifies the tag/version and main ancestry, runs the tests, installs the packed tarball into a clean consumer directory and validates both bundled check collections, then publishes with provenance. It uses npm trusted publishing (OIDC), with `id-token: write` limited to the publish job; no npm token is stored in GitHub.
 
 ### One-time npm setup
 

@@ -17,6 +17,7 @@
     "src/**/*.mjs",
     "!src/**/*.test.mjs",
     "starter-checks/",
+    "checks-library/",
     "NOTICE"
   ],
   "repository": {

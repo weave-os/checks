@@ -75,6 +75,7 @@ jobs:
           (
             cd "$tmp/consumer"
             ./node_modules/.bin/weave-checks list --checks-dir node_modules/@weave-os/checks/starter-checks
+            ./node_modules/.bin/weave-checks list --checks-dir node_modules/@weave-os/checks/checks-library
           )
 
       - name: Publish with npm OIDC and provenance
