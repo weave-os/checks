@@ -138,7 +138,7 @@ function resolutionAlreadyPosted(node, slug, codec) {
 // fixed with the audit reply already posted. Only the GitHub state drives
 // dismissing or hiding reviews; this drives "still open" and re-judging.
 export function isSettled(thread) {
-  return thread.isResolved || thread.resolutionReplied === true;
+  return thread.isResolved || thread.resolutionReplied;
 }
 
 // Normalizes raw GraphQL thread nodes into the shape the rest of this module

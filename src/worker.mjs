@@ -668,13 +668,13 @@ export async function runWorker(config, deps = {}) {
     // GitHub may refuse resolveReviewThread even after this check posted its
     // audit reply. Re-attempt the mutation on every run, but never re-post the
     // same reply or ask the judge the same question again.
-    const alreadyReplied = checkThreads
+    const resolutionRetries = checkThreads
       .filter(thread => thread.resolutionReplied && !thread.isResolved)
       .map(thread => ({
         threadId: thread.threadId,
         evidence: "Previously judged resolved by this check.",
       }));
-    const resolutions = [...judgment.resolutions, ...alreadyReplied];
+    const resolutions = [...judgment.resolutions, ...resolutionRetries];
     // Track only IDs whose resolveThread actually succeeded. reviewsToDismiss
     // and reviewsToHide honor this set, so a failed mutation keeps the parent
     // review visible. `resolvedOpenIds` counts only findings judged this run;

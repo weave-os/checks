@@ -89,7 +89,6 @@ export async function requestOidcToken({
   return value;
 }
 
-// What to tell a user who hit a documented refusal. Keyed by EXCHANGE_ERROR.
 function refusalHint(code) {
   switch (code) {
     case EXCHANGE_ERROR.NOT_INSTALLED:
@@ -106,7 +105,7 @@ function refusalHint(code) {
 }
 
 // Trades the OIDC token for a Weave Checks App installation token. Returns
-// `{ token, expiresAt, repository }`. Transient failures are retried by the
+// `{ token, repository }`. Transient failures are retried by the
 // shared transport; every refusal is a TokenExchangeError carrying Weave's
 // error code, so the caller can tell "fix your setup" from "try again later".
 export async function exchangeForAppToken({
@@ -148,11 +147,7 @@ export async function exchangeForAppToken({
       status: response.status,
     });
   }
-  return {
-    token: body.token,
-    expiresAt: body.expires_at ?? null,
-    repository: body.repository ?? null,
-  };
+  return { token: body.token, repository: body.repository ?? null };
 }
 
 // Revokes the installation token so it cannot outlive the job. Best-effort:

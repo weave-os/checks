@@ -90,11 +90,7 @@ describe("exchangeForAppToken", () => {
       ...quiet,
     });
 
-    assert.deepEqual(result, {
-      token: "ghs_app",
-      expiresAt: "2026-09-29T12:00:00Z",
-      repository: "acme/widgets",
-    });
+    assert.deepEqual(result, { token: "ghs_app", repository: "acme/widgets" });
     assert.equal(fetchFn.calls[0].url, "https://weave.test/x");
     assert.equal(fetchFn.calls[0].init.method, "POST");
     assert.equal(fetchFn.calls[0].init.headers.Authorization, "Bearer oidc.jwt");

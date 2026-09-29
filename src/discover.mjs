@@ -39,15 +39,9 @@ function checkFiles(
 // Reads and validates every check in `checksDir`, resolved against `repoDir`.
 // `checksDir` is recorded in each entry's `path` as given, so a repo-relative
 // directory yields repo-relative paths the runner can join onto the repo root.
-export function discoverChecks(
-  checksDir,
-  { repoDir = ".", policy = WEAVE_POLICY, allowEmpty = false, sourceDir } = {},
-) {
-  const matrix = buildMatrix(
-    checkFiles(checksDir, { repoDir, sourceDir, policy, allowMissing: allowEmpty }),
-    policy,
-  );
-  if (matrix.length === 0 && !allowEmpty) {
+export function discoverChecks(checksDir, { repoDir = ".", policy = WEAVE_POLICY } = {}) {
+  const matrix = buildMatrix(checkFiles(checksDir, { repoDir, policy }), policy);
+  if (matrix.length === 0) {
     throw new Error(`no checks found in ${checksDir}`);
   }
   return matrix;

@@ -145,7 +145,6 @@ runs:
     # pending forever.
     - name: Create aggregate check run
       id: aggregate
-      if: steps.app-token.outputs.token != ''
       shell: bash
       env:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
