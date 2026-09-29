@@ -19,8 +19,7 @@ import { requestWithRetry, truncateBody } from "./githubapi.mjs";
 // OIDC use so a token minted for Weave Checks can never be replayed elsewhere.
 export const OIDC_AUDIENCE = "weave-checks";
 
-export const DEFAULT_TOKEN_EXCHANGE_URL =
-  "https://staging-01.weaveos.com/api/v1/checks/github-token";
+export const DEFAULT_TOKEN_EXCHANGE_URL = "https://app.weaveos.com/api/v1/checks/github-token";
 
 // Where to install the App, named in every error that means "not installed".
 export const APP_INSTALL_URL = "https://github.com/apps/weave-checks/installations/new";
