@@ -19,10 +19,9 @@ permissions:
 jobs:
   self-check:
     name: Weave Checks dogfood
-    # Keep dogfooding disabled until the OIDC exchange endpoint is deployed
-    # and verified; the App-only action intentionally has no bot fallback.
-    # Fork PRs also receive no OIDC token. Never use pull_request_target.
-    if: github.event.pull_request.head.repo.full_name == github.repository && vars.WEAVE_CHECKS_TOKEN_EXCHANGE_READY == 'true'
+    # Fork PRs do not receive OIDC tokens. Restrict dogfooding to this repo;
+    # never use pull_request_target.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       # This checkout makes the local composite action available as ./.

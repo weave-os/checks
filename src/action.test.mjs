@@ -142,7 +142,7 @@ describe("action.yml", () => {
     assert.match(workflow, /pull_request:/);
     assert.doesNotMatch(workflow, /^  pull_request_target:/m);
     assert.match(workflow, /head\.repo\.full_name == github\.repository/);
-    assert.match(workflow, /vars\.WEAVE_CHECKS_TOKEN_EXCHANGE_READY == 'true'/);
+    assert.doesNotMatch(workflow, /WEAVE_CHECKS_TOKEN_EXCHANGE_READY/);
     assert.match(workflow, /id-token: write/);
     assert.doesNotMatch(workflow, /checks: write|pull-requests: write|github\.token/);
     assert.match(workflow, /secrets\.WEAVE_ROUTER_KEY/);
