@@ -60,5 +60,22 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # Exercise the exact package users will install, like the router's
+      # test-install release gate.
+      - name: Smoke-test packed package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          npm pack --pack-destination "$tmp"
+          tarball="$(find "$tmp" -maxdepth 1 -name '*.tgz' -print -quit)"
+          mkdir "$tmp/consumer"
+          npm install --prefix "$tmp/consumer" "$tarball" --ignore-scripts --no-audit --no-fund
+          (
+            cd "$tmp/consumer"
+            ./node_modules/.bin/weave-checks list --checks-dir node_modules/@weave-os/checks/starter-checks
+          )
+
       - name: Publish with npm OIDC and provenance
         run: npm publish --provenance --access public

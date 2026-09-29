@@ -172,14 +172,41 @@ Other inputs configure concurrency, three budgets, review event, the dedup judge
 
 ## Publishing
 
-The npm package is `@weave-os/checks`. Git tags use `checks-v<version>` and must point to a commit reachable from `main` with a matching `package.json` version. Publishing uses npm trusted publishing (OIDC), not a long-lived npm token. Before the first release, configure npmjs.com → `@weave-os/checks` → **Trusted Publisher** with:
+The npm package is `@weave-os/checks`. As in the Weave Router release flow, each release starts with a version-bump PR; merging does not publish by itself. Once the version change is on `main`, pushing a `checks-v<version>` tag starts the publisher. The tag must point to a commit reachable from `main` and match `package.json` exactly.
+
+The workflow verifies the tag/version and main ancestry, runs the tests, installs the packed tarball into a clean consumer directory and validates the bundled starter checks, then publishes with provenance. It uses npm trusted publishing (OIDC), with `id-token: write` limited to the publish job; no npm token is stored in GitHub.
+
+### One-time npm setup
+
+npm requires a package to exist before you can configure its trusted publisher. The registry currently has no `@weave-os/checks` package, so the initial package bootstrap cannot use this OIDC workflow. After the initial release commit is on `main`, run the first publish once from a maintainer machine using npm's normal authenticated CLI flow:
+
+```sh
+npm login
+npm publish --access public
+```
+
+Then immediately configure the trusted publisher in npmjs.com → `@weave-os/checks` → **Settings → Trusted Publisher**:
 
 - Provider: GitHub Actions
 - Organization: `weave-os`
 - Repository: `checks`
 - Workflow filename: `publish_npm.yml`
+- Allow direct publishing with `npm publish` (the workflow does not use staged publishing)
 
-The release workflow verifies the tag/version and main ancestry, runs the test suite, then publishes with provenance. The repository owner must complete the npm trusted-publisher setup; this project does not attempt to publish automatically outside the tagged workflow.
+Do not push a `checks-v<version>` tag for the version published manually; the workflow would correctly reject trying to publish that immutable version again. The manual bootstrap will not carry GitHub Actions provenance; subsequent tagged releases will. Revoke any temporary npm token after the bootstrap. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for current requirements.
+
+### Release a version after setup
+
+1. Update `version` in `package.json` in a PR. Use the normal test checks and merge the bump to `main`.
+2. From an up-to-date local `main`, create and push an annotated tag for that exact version:
+
+   ```sh
+   version="$(node -p "require('./package.json').version")"
+   git tag -a "checks-v${version}" -m "Release checks v${version}"
+   git push origin "checks-v${version}"
+   ```
+
+3. Follow the **Publish npm** workflow in GitHub Actions. A failed run does not publish; fix the issue and rerun it, or publish a new version if that version already reached npm.
 
 ## License
 
