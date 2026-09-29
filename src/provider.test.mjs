@@ -91,7 +91,7 @@ describe("createProvider", () => {
       createProvider(PROVIDER.ANTHROPIC),
       createProvider(PROVIDER.INHERIT),
       createProvider(PROVIDER.WEAVE_ROUTER, {
-        env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" },
+        env: { WEAVE_ROUTER_KEY: "rk" },
       }),
     ];
     for (const provider of providers) {
@@ -113,17 +113,13 @@ describe("createProvider", () => {
     assert.deepEqual(provider.envFor({}), {});
   });
 
-  it("requires both Router secrets only for weave-router", () => {
+  it("requires only the Router key for weave-router", () => {
     assert.throws(
       () => createProvider(PROVIDER.WEAVE_ROUTER, { env: {} }),
       /requires WEAVE_ROUTER_KEY/,
     );
-    assert.throws(
-      () => createProvider(PROVIDER.WEAVE_ROUTER, { env: { WEAVE_ROUTER_KEY: "rk" } }),
-      /requires WEAVE_API_KEY/,
-    );
     const provider = createProvider(PROVIDER.WEAVE_ROUTER, {
-      env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" },
+      env: { WEAVE_ROUTER_KEY: "rk" },
     });
     assert.equal(provider.id, "weave-router");
   });
@@ -132,13 +128,12 @@ describe("createProvider", () => {
     const provider = createProvider(PROVIDER.WEAVE_ROUTER, {
       env: {
         WEAVE_ROUTER_KEY: "rk",
-        WEAVE_API_KEY: "wk",
-        WEAVE_ROUTER_BASE_URL: "https://router.staging.example",
+        WEAVE_ROUTER_URL: "https://router.staging.example/",
       },
     });
     assert.equal(
       provider.envFor({ cluster: "low" }).ANTHROPIC_BASE_URL,
-      "https://router.staging.example",
+      "https://router.staging.example/",
     );
   });
 

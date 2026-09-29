@@ -76,7 +76,7 @@ export function readConfig(env) {
     parallel: positiveInteger(env.PARALLEL, DEFAULT_PARALLEL),
     // Only the selected provider's credentials are read: `inherit` and
     // `anthropic` need no Weave key, and `weave-router` fails here, before
-    // any agent runs, if either of its two is missing.
+    // any agent runs, if its router key is missing.
     provider: createProvider(env.WEAVE_CHECKS_PROVIDER || DEFAULT_LOCAL_PROVIDER, {
       env,
       providerEnv: parseProviderEnv(env.WEAVE_CHECKS_PROVIDER_ENV),

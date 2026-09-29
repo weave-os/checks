@@ -204,13 +204,10 @@ describe("readWorkerConfig", () => {
     }
   });
 
-  it("fails at startup when weave-router is missing a key", () => {
+  it("fails at startup when weave-router is missing its key", () => {
     const { env } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" });
-    assert.throws(() => readWorkerConfig(env), /requires WEAVE_API_KEY/);
-    const { env: noRouter } = workerEnv({
-      WEAVE_CHECKS_PROVIDER: "weave-router",
-      WEAVE_API_KEY: "wk",
-    });
+    assert.equal(readWorkerConfig(env).provider.id, "weave-router");
+    const { env: noRouter } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router" });
     assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
   });
 

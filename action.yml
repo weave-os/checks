@@ -24,10 +24,10 @@ inputs:
     description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key.
     default: ""
   weave-router-key:
-    description: Weave Router key (provider weave-router). Required in that mode.
+    description: Weave Router key for requests and session costs (provider weave-router). Required in that mode.
     default: ""
-  weave-api-key:
-    description: Weave API key used to read each session's billed cost (provider weave-router). Required in that mode.
+  weave-router-url:
+    description: Weave Router URL (provider weave-router). Defaults to the production Router.
     default: ""
   provider-env:
     description: >-
@@ -225,7 +225,7 @@ runs:
         WEAVE_CHECKS_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
         WEAVE_ROUTER_KEY: ${{ inputs.weave-router-key }}
-        WEAVE_API_KEY: ${{ inputs.weave-api-key }}
+        WEAVE_ROUTER_URL: ${{ inputs.weave-router-url }}
         WEAVE_CHECKS_PROVIDER_ENV: ${{ inputs.provider-env }}
         WEAVE_CHECKS_DIR: ${{ inputs.checks-dir }}
         WEAVE_CHECK_PARALLEL: ${{ inputs.concurrency }}

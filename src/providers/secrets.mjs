@@ -9,9 +9,10 @@
 //                              -- the action's credential inputs, which the
 //                                 anthropic provider re-exports under the
 //                                 names the CLI reads
-//   WEAVE_ROUTER_KEY, WEAVE_API_KEY
-//                              -- Weave Router's key (it rides in a header
-//                                 instead) and the cost-lookup key
+//   WEAVE_ROUTER_KEY           -- Weave Router key (it rides in a header
+//                                 instead)
+//   WEAVE_API_KEY              -- obsolete legacy key, still scrubbed if a
+//                                 caller has it in their environment
 export const COORDINATOR_ONLY_ENV = Object.freeze([
   "WEAVE_CHECKS_APP_TOKEN",
   "GITHUB_TOKEN",

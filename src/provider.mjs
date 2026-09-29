@@ -17,11 +17,7 @@
 
 import { anthropicProvider } from "./providers/anthropic.mjs";
 import { inheritProvider } from "./providers/inherit.mjs";
-import {
-  ROUTER_KEY_ENV,
-  WEAVE_API_KEY_ENV,
-  weaveRouterProvider,
-} from "./providers/weave-router.mjs";
+import { ROUTER_KEY_ENV, ROUTER_URL_ENV, weaveRouterProvider } from "./providers/weave-router.mjs";
 
 export const PROVIDER = Object.freeze({
   ANTHROPIC: "anthropic",
@@ -61,8 +57,8 @@ export function parseProviderEnv(text) {
 // is the parsed `provider-env` overlay. Only the selected provider's secrets
 // are read, so an Anthropic consumer never needs a Weave key.
 //
-// WEAVE_ROUTER_BASE_URL / WEAVE_API_BASE_URL override the Router's service
-// endpoints, for a self-hosted or staging Router; unset means production.
+// WEAVE_ROUTER_URL overrides the Router host for a self-hosted or staging
+// Router; unset means production.
 export function createProvider(name, { env = {}, providerEnv = {} } = {}) {
   switch (name) {
     case PROVIDER.ANTHROPIC:
@@ -74,9 +70,7 @@ export function createProvider(name, { env = {}, providerEnv = {} } = {}) {
     case PROVIDER.WEAVE_ROUTER:
       return weaveRouterProvider({
         routerKey: env[ROUTER_KEY_ENV],
-        weaveAPIKey: env[WEAVE_API_KEY_ENV],
-        ...(env.WEAVE_ROUTER_BASE_URL ? { baseUrl: env.WEAVE_ROUTER_BASE_URL } : {}),
-        ...(env.WEAVE_API_BASE_URL ? { apiBaseUrl: env.WEAVE_API_BASE_URL } : {}),
+        ...(env[ROUTER_URL_ENV] ? { routerUrl: env[ROUTER_URL_ENV] } : {}),
       });
     case PROVIDER.INHERIT:
       return inheritProvider();

@@ -104,7 +104,8 @@ Providers:
   inherit        Your own Claude Code configuration, unchanged (default)
   anthropic      ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN from the environment, plus
                  WEAVE_CHECKS_PROVIDER_ENV (KEY=VALUE lines) for a gateway or Bedrock/Vertex
-  weave-router   WEAVE_ROUTER_KEY and WEAVE_API_KEY from the environment; Router-billed cost
+  weave-router   WEAVE_ROUTER_KEY from the environment; Router-billed cost
+                 WEAVE_ROUTER_URL optionally overrides the Router host
 
 Exit status: 0 when nothing was flagged, 1 when a check flagged findings, 2 on
 usage errors. A neutral check (it could not reach a verdict) never fails the run.

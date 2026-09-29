@@ -139,12 +139,15 @@ describe("readConfig", () => {
     assert.deepEqual(provider.envFor({}), { ANTHROPIC_BASE_URL: "https://gateway.example.com" });
   });
 
-  it("fails before any agent runs when weave-router lacks a key", () => {
+  it("requires only a Router key for weave-router", () => {
     assert.throws(
-      () =>
-        readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" }).env),
-      /requires WEAVE_API_KEY/,
+      () => readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "weave-router" }).env),
+      /requires WEAVE_ROUTER_KEY/,
     );
+    const config = readConfig(
+      fixture({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" }).env,
+    );
+    assert.equal(config.provider.id, "weave-router");
   });
 
   it("defaults the schema to the packaged result schema", () => {

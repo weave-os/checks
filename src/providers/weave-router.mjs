@@ -23,7 +23,7 @@
 import { COORDINATOR_ONLY_ENV } from "./secrets.mjs";
 
 export const ROUTER_BASE_URL = "https://router.weaveos.com";
-export const WEAVE_API_BASE_URL = "https://app.weaveos.com/api/v1";
+export const ROUTER_URL_ENV = "WEAVE_ROUTER_URL";
 const USD_MICROS_PER_USD = 1_000_000;
 
 // Router telemetry is written asynchronously, so a session that has only just
@@ -105,10 +105,10 @@ export const WEAVE_CHECKS_USER_EMAIL = "weave-checks@weaveos.com";
 export function routerEnvironment(
   routerKey,
   cluster,
-  { baseUrl = ROUTER_BASE_URL, userEmail = WEAVE_CHECKS_USER_EMAIL } = {},
+  { routerUrl = ROUTER_BASE_URL, userEmail = WEAVE_CHECKS_USER_EMAIL } = {},
 ) {
   return {
-    ANTHROPIC_BASE_URL: baseUrl,
+    ANTHROPIC_BASE_URL: routerUrl,
     ANTHROPIC_API_KEY: "placeholder-router-authenticates-via-header",
     ANTHROPIC_CUSTOM_HEADERS: [
       `X-Weave-Router-Key: ${routerKey}`,
@@ -125,7 +125,7 @@ export function routerEnvironment(
 }
 
 // Resolves one CLI invocation's actual cost in USD via
-// GET /router/sessions/{session_id}/cost.
+// GET /v1/sessions/{session_id}/cost.
 //
 // `sessionId` comes from the first event in the invocation's stream-json
 // transcript (splitStreamJson()). Keep it opaque: the router's public
@@ -147,12 +147,12 @@ export function routerEnvironment(
 // is spend the org is charged for and the local estimate silently omits.
 export async function routerSessionCost(
   sessionId,
-  weaveAPIKey,
+  routerKey,
   {
     fetchFn = fetch,
     sleepFn = ms => new Promise(resolve => setTimeout(resolve, ms)),
     retryDelaysMs = COST_RETRY_DELAYS_MS,
-    apiBaseUrl = WEAVE_API_BASE_URL,
+    routerUrl = ROUTER_BASE_URL,
   } = {},
 ) {
   if (typeof sessionId !== "string" || sessionId === "") {
@@ -162,7 +162,7 @@ export async function routerSessionCost(
     };
   }
 
-  const url = `${apiBaseUrl}/router/sessions/${encodeURIComponent(sessionId)}/cost`;
+  const url = `${routerUrl.replace(/\/+$/, "")}/v1/sessions/${encodeURIComponent(sessionId)}/cost`;
   let lastError = null;
   // Overrides the ladder's next delay when the previous attempt's 429 carried
   // a `Retry-After` hint -- see parseRetryAfterMs() above. `null` means "no
@@ -198,7 +198,7 @@ export async function routerSessionCost(
     let response;
     try {
       response = await fetchFn(url, {
-        headers: { "X-API-Key": weaveAPIKey },
+        headers: { Authorization: `Bearer ${routerKey}` },
         signal: AbortSignal.timeout(COST_REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
@@ -266,41 +266,31 @@ export async function routerSessionCost(
   return { cost: null, error: lastError };
 }
 
-// Environment names the provider reads its two secrets from. Named once so
-// the credential lookup and the child-environment scrub cannot disagree.
+// Environment names the provider reads its key and URL from. Named once so
+// credential lookup and URL configuration cannot disagree.
 export const ROUTER_KEY_ENV = "WEAVE_ROUTER_KEY";
-export const WEAVE_API_KEY_ENV = "WEAVE_API_KEY";
 
-// Builds the provider. Both keys are required: without the router key every
-// agent call fails at the first request, and without the Weave API key every
-// check completes with an unknown cost. Failing at construction makes either
-// misconfiguration obvious instead of surfacing as a row of identical neutral
-// checks.
+// Builds the provider. The router key authenticates both agent calls and the
+// session-cost lookup, so no separate Weave API credential is needed.
 export function weaveRouterProvider({
   routerKey,
-  weaveAPIKey,
-  baseUrl = ROUTER_BASE_URL,
-  apiBaseUrl = WEAVE_API_BASE_URL,
+  routerUrl = ROUTER_BASE_URL,
   userEmail = WEAVE_CHECKS_USER_EMAIL,
   costOptions = {},
 } = {}) {
   if (typeof routerKey !== "string" || routerKey === "") {
     throw new Error(`provider weave-router requires ${ROUTER_KEY_ENV}`);
   }
-  if (typeof weaveAPIKey !== "string" || weaveAPIKey === "") {
-    throw new Error(`provider weave-router requires ${WEAVE_API_KEY_ENV} for session cost`);
-  }
   return Object.freeze({
     id: "weave-router",
     costLabel: "router cost",
-    // Neither Weave secret is needed by the CLI child: the router key already
-    // rides in ANTHROPIC_CUSTOM_HEADERS, and the Weave API key is only for
-    // the coordinator's cost lookup (both are in COORDINATOR_ONLY_ENV).
+    // The raw router-key variable is scrubbed from child environments; the
+    // provider supplies it in the CLI's auth header and uses it for cost lookup.
     // Direct auth-token and OAuth variables are removed; any inherited API key
     // is replaced by the router placeholder in the provider env overlay.
     dropEnv: [...COORDINATOR_ONLY_ENV, "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
-    envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { baseUrl, userEmail }),
+    envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { routerUrl, userEmail }),
     resolveCost: ({ sessionId }) =>
-      routerSessionCost(sessionId, weaveAPIKey, { apiBaseUrl, ...costOptions }),
+      routerSessionCost(sessionId, routerKey, { routerUrl, ...costOptions }),
   });
 }

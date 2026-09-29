@@ -11,7 +11,6 @@ name: Weave Checks
 #         id-token: write
 #       secrets:
 #         weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
-#         weave-api-key: ${{ secrets.WEAVE_API_KEY }}
 #
 # Weave issues the Weave Checks App token only to this workflow at an approved
 # commit, identified by the OIDC token's signed job_workflow_ref and
@@ -25,6 +24,10 @@ on:
         description: "Who serves the agents' requests: weave-router, or anthropic (direct Anthropic or any Anthropic-compatible endpoint)."
         type: string
         default: weave-router
+      weave-router-url:
+        description: Weave Router URL. Defaults to the production Router.
+        type: string
+        default: ""
       checks-dir:
         description: Directory of check files, relative to the repository root.
         type: string
@@ -68,9 +71,6 @@ on:
     secrets:
       weave-router-key:
         description: Weave Router key (provider weave-router).
-        required: false
-      weave-api-key:
-        description: Weave API key used to read each session's billed cost (provider weave-router).
         required: false
       anthropic-api-key:
         description: Anthropic API key (provider anthropic).
@@ -196,7 +196,7 @@ jobs:
         with:
           provider: ${{ inputs.provider }}
           weave-router-key: ${{ secrets.weave-router-key }}
-          weave-api-key: ${{ secrets.weave-api-key }}
+          weave-router-url: ${{ inputs.weave-router-url }}
           anthropic-api-key: ${{ secrets.anthropic-api-key }}
           claude-code-oauth-token: ${{ secrets.claude-code-oauth-token }}
           provider-env: ${{ secrets.provider-env }}

@@ -9,18 +9,20 @@ import {
 
 const SESSION_ID = "a2c7f8a4-6bcb-4c17-a0c1-e2c3d0877fc1";
 const ROUTER_KEY = "rk_test";
-const WEAVE_API_KEY = "wk_test";
 
 function fakeFetch(responses) {
   let call = 0;
   const urls = [];
-  const fn = async url => {
+  const requests = [];
+  const fn = async (url, options) => {
     urls.push(url);
+    requests.push({ url, options });
     const response = responses[Math.min(call, responses.length - 1)];
     call += 1;
     return response;
   };
   fn.urls = urls;
+  fn.requests = requests;
   fn.callCount = () => call;
   return fn;
 }
@@ -51,18 +53,30 @@ describe("routerEnvironment", () => {
 describe("routerSessionCost", () => {
   it("takes a session ID and looks up the cost", async () => {
     const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 23418 })]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
     });
     assert.equal(cost, 0.023418);
     assert.equal(error, null);
-    assert.match(fetchFn.urls[0], new RegExp(`/router/sessions/${SESSION_ID}/cost$`));
+    assert.equal(fetchFn.urls[0], `https://router.weaveos.com/v1/sessions/${SESSION_ID}/cost`);
+    assert.equal(fetchFn.requests[0].options.headers.Authorization, "Bearer rk_test");
+  });
+
+  it("uses the configured Router URL and removes its trailing slash", async () => {
+    const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 500_000 })]);
+    const { cost } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
+      fetchFn,
+      routerUrl: "https://router.staging.example/",
+    });
+    assert.equal(cost, 0.5);
+    assert.equal(fetchFn.urls[0], `https://router.staging.example/v1/sessions/${SESSION_ID}/cost`);
+    assert.equal(fetchFn.requests[0].options.headers.Authorization, "Bearer rk_test");
   });
 
   it("returns a null cost and an error on an empty session ID", async () => {
     const fetchFn = fakeFetch([jsonResponse(200, {})]);
     for (const bad of ["", undefined, null, 0, {}, [], true]) {
-      const { cost, error } = await routerSessionCost(bad, WEAVE_API_KEY, {
+      const { cost, error } = await routerSessionCost(bad, ROUTER_KEY, {
         fetchFn,
       });
       assert.equal(cost, null, `cost for ${JSON.stringify(bad)}`);
@@ -77,7 +91,7 @@ describe("routerSessionCost", () => {
       jsonResponse(404, {}),
       jsonResponse(200, { actual_cost_usd_micros: 100 }),
     ]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1, 1, 1],
@@ -89,7 +103,7 @@ describe("routerSessionCost", () => {
 
   it("gives up after exhausting retries on persistent 404", async () => {
     const fetchFn = fakeFetch([jsonResponse(404, {})]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1],
@@ -99,9 +113,9 @@ describe("routerSessionCost", () => {
     assert.equal(fetchFn.callCount(), 2);
   });
 
-  it("does not retry a 401 (wrong or revoked API key)", async () => {
+  it("does not retry a 401 (wrong or revoked router key)", async () => {
     const fetchFn = fakeFetch([jsonResponse(401, {})]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1, 1],
@@ -116,7 +130,7 @@ describe("routerSessionCost", () => {
       jsonResponse(429, {}),
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1],
@@ -131,7 +145,7 @@ describe("routerSessionCost", () => {
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
     const sleeps = [];
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async ms => {
         sleeps.push(ms);
@@ -154,7 +168,7 @@ describe("routerSessionCost", () => {
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
     const sleeps = [];
-    const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async ms => {
         sleeps.push(ms);
@@ -173,7 +187,7 @@ describe("routerSessionCost", () => {
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
     const sleeps = [];
-    const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async ms => {
         sleeps.push(ms);
@@ -191,7 +205,7 @@ describe("routerSessionCost", () => {
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
     const sleeps = [];
-    const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async ms => {
         sleeps.push(ms);
@@ -211,7 +225,7 @@ describe("routerSessionCost", () => {
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
     const sleeps = [];
-    const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async ms => {
         sleeps.push(ms);
@@ -231,7 +245,7 @@ describe("routerSessionCost", () => {
       jsonResponse(503, {}),
       jsonResponse(200, { actual_cost_usd_micros: 500 }),
     ]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1],
@@ -242,7 +256,7 @@ describe("routerSessionCost", () => {
 
   it("treats a missing actual_cost_usd_micros as an unknown cost, not zero", async () => {
     const fetchFn = fakeFetch([jsonResponse(200, { session_id: SESSION_ID })]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
     });
     assert.equal(cost, null);
@@ -251,7 +265,7 @@ describe("routerSessionCost", () => {
 
   it("resolves cost for a session that exits after producing a session ID", async () => {
     const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 2_000_000 })]);
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
     });
     assert.equal(cost, 2);
@@ -265,7 +279,7 @@ describe("routerSessionCost", () => {
       if (calls === 1) throw new Error("ECONNRESET");
       return jsonResponse(200, { actual_cost_usd_micros: 42 });
     };
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1],
@@ -292,7 +306,7 @@ describe("routerSessionCost", () => {
       }
       return jsonResponse(200, { actual_cost_usd_micros: 42 });
     };
-    const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
+    const { cost, error } = await routerSessionCost(SESSION_ID, ROUTER_KEY, {
       fetchFn,
       sleepFn: async () => {},
       retryDelaysMs: [0, 1],
@@ -304,7 +318,7 @@ describe("routerSessionCost", () => {
 });
 
 describe("weaveRouterProvider", () => {
-  const provider = () => weaveRouterProvider({ routerKey: ROUTER_KEY, weaveAPIKey: WEAVE_API_KEY });
+  const provider = () => weaveRouterProvider({ routerKey: ROUTER_KEY });
 
   it("sends the intelligence-derived cluster as the force-cluster header", () => {
     const env = provider().envFor({ model: "opus", intelligence: "high", cluster: "high" });
@@ -312,10 +326,9 @@ describe("weaveRouterProvider", () => {
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Router-Key: rk_test/);
   });
 
-  // The Weave API key only feeds the coordinator's cost lookup; the router key
-  // already rides in a header; a direct Anthropic credential would compete
-  // with the router placeholder.
-  it("keeps both Weave secrets and direct Anthropic credentials out of the child", () => {
+  // The router key feeds the coordinator and rides in a header; direct
+  // Anthropic credentials would compete with the router placeholder.
+  it("keeps the router key and direct Anthropic credentials out of the child", () => {
     for (const name of [
       "WEAVE_ROUTER_KEY",
       "WEAVE_API_KEY",
@@ -330,7 +343,6 @@ describe("weaveRouterProvider", () => {
     const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 1_500_000 })]);
     const routed = weaveRouterProvider({
       routerKey: ROUTER_KEY,
-      weaveAPIKey: WEAVE_API_KEY,
       costOptions: { fetchFn },
     });
     assert.equal(routed.costLabel, "router cost");
@@ -342,14 +354,12 @@ describe("weaveRouterProvider", () => {
     });
     assert.equal(cost, 1.5);
     assert.equal(error, null);
-    assert.match(fetchFn.urls[0], /^https:\/\/app\.weaveos\.com\/api\/v1\/router\/sessions\//);
+    assert.equal(fetchFn.urls[0], `https://router.weaveos.com/v1/sessions/${SESSION_ID}/cost`);
+    assert.equal(fetchFn.requests[0].options.headers.Authorization, "Bearer rk_test");
   });
 
-  it("requires both keys", () => {
-    assert.throws(
-      () => weaveRouterProvider({ weaveAPIKey: WEAVE_API_KEY }),
-      /requires WEAVE_ROUTER_KEY/,
-    );
-    assert.throws(() => weaveRouterProvider({ routerKey: ROUTER_KEY }), /requires WEAVE_API_KEY/);
+  it("requires only the router key", () => {
+    assert.throws(() => weaveRouterProvider(), /requires WEAVE_ROUTER_KEY/);
+    assert.equal(weaveRouterProvider({ routerKey: ROUTER_KEY }).id, "weave-router");
   });
 });

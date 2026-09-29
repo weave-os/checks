@@ -25,7 +25,6 @@ jobs:
       id-token: write
     secrets:
       weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
-      weave-api-key: ${{ secrets.WEAVE_API_KEY }}
 ```
 
 Pin a commit SHA, not `main` or a tag: Weave issues the App token only to approved commits of this workflow, so a movable ref would stop working when it moves. The job needs nothing but `id-token: write`; every GitHub call it makes is as the Weave Checks App. Pull requests from forks get no OIDC token, so the workflow skips them. It runs on `pull_request` events only; never call it from `pull_request_target`.
@@ -49,9 +48,11 @@ Check runs, reviews, and replies always come from the **Weave Checks** GitHub Ap
 
 ### Provider setup
 
-The workflow defaults to `provider: weave-router`, as in the example above. Set repository or organization secrets named `WEAVE_ROUTER_KEY` and `WEAVE_API_KEY` and pass both. Router mode requires an `intelligence` value on every check; the tier becomes the Router force-cluster, and the model alias is derived from the same value. The Weave API key is never passed to an agent.
+The workflow defaults to `provider: weave-router`, as in the example above. Set a repository or organization secret named `WEAVE_ROUTER_KEY` and pass it as `weave-router-key`. The same key authenticates Router requests and session-cost lookups; no separate Weave API key is needed. Router mode requires an `intelligence` value on every check; the tier becomes the Router force-cluster, and the model alias is derived from the same value. The key is supplied to CLI requests via the `X-Weave-Router-Key` header and used directly for cost lookups.
 
-With `provider: anthropic`, pass an Anthropic API key, Claude Code OAuth credentials, or an Anthropic-compatible endpoint through the `provider-env` secret. Neither Weave key is needed. Example for a gateway, with a repository secret `WEAVE_CHECKS_PROVIDER_ENV` holding the lines to pass:
+The production Router URL is used by default. For a self-hosted or staging Router, set the workflow's `weave-router-url` input to its host URL (for example, `${{ vars.WEAVE_ROUTER_URL }}`).
+
+With `provider: anthropic`, pass an Anthropic API key, Claude Code OAuth credentials, or an Anthropic-compatible endpoint through the `provider-env` secret. The Router key is not needed. Example for a gateway, with a repository secret `WEAVE_CHECKS_PROVIDER_ENV` holding the lines to pass:
 
 ```yaml
 with:
@@ -113,12 +114,20 @@ npx @weave-os/checks list --checks-dir .weave-checks
 npx @weave-os/checks run --checks-dir .weave-checks --base origin/main
 ```
 
-`run` reviews staged, unstaged, and untracked changes (but not gitignored files) relative to the merge base with `--base`, by default `origin/main` or `main` if no `origin/main` exists. Use `--head <ref>` to review a committed range instead. The local runner defaults to `provider: inherit`, loading the current user's Claude Code configuration; select `anthropic` or `weave-router` explicitly for a different provider. Router mode reads `WEAVE_ROUTER_KEY` and `WEAVE_API_KEY` from the environment. Example:
+`run` reviews staged, unstaged, and untracked changes (but not gitignored files) relative to the merge base with `--base`, by default `origin/main` or `main` if no `origin/main` exists. Use `--head <ref>` to review a committed range instead. The local runner defaults to `provider: inherit`, loading the current user's Claude Code configuration; select `anthropic` or `weave-router` explicitly for a different provider. Router mode reads `WEAVE_ROUTER_KEY` from the environment; `WEAVE_ROUTER_URL` optionally overrides the default production host. The same router key authenticates the session-cost endpoint. Example:
 
 ```sh
-WEAVE_CHECKS_PROVIDER=anthropic \
+export WEAVE_ROUTER_KEY="rk_..."
+# Optional override for a self-hosted or staging Router:
+# export WEAVE_ROUTER_URL="https://<your-router-host>"
+npx @weave-os/checks run --provider weave-router --checks-dir .weave-checks --base origin/main
+```
+
+For an Anthropic-compatible gateway, for example:
+
+```sh
 WEAVE_CHECKS_PROVIDER_ENV='ANTHROPIC_BASE_URL=https://llm-gateway.example.com' \
-npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format markdown
+npx @weave-os/checks run --provider anthropic --checks-dir .weave-checks --base origin/main --format markdown
 ```
 
 `run` exits 1 when at least one check flags findings, 2 for invalid options or setup, and 0 when there are no findings. Use `--no-fail` to report findings without a non-zero exit. Neutral operational misses do not fail the run. `--format` supports `text`, `markdown`, and `json`; `--output <file>` writes the JSON result as well. Prompts, transcripts, and per-check results are stored in a temporary directory by default; `--artifacts-dir` keeps them at the path you choose. These artifacts contain the diff and agent output, so handle them as repository data.
@@ -132,6 +141,7 @@ npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format 
 | Input                 | Default         | Purpose                                                                                                  |
 | --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
 | `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
+| `weave-router-url`    | production URL  | Router host URL for `weave-router`; defaults to `https://router.weaveos.com`.                            |
 | `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
 | `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
 | `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
@@ -147,7 +157,7 @@ npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format 
 
 | Secret                                          | Purpose                                                                         |
 | ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| `weave-router-key` / `weave-api-key`            | The two required Router credentials, only for Router mode.                      |
+| `weave-router-key`                              | Router key used for requests and session-cost lookups, only for Router mode.    |
 | `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them.         |
 | `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line. |
 

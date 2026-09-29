@@ -16,4 +16,3 @@ jobs:
       use-default-checks: true
     secrets:
       weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
-      weave-api-key: ${{ secrets.WEAVE_API_KEY }}
