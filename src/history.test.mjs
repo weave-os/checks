@@ -15,6 +15,7 @@ import {
   formatHistorySection,
   formatMarker,
   formatResolutionSection,
+  markerCodec,
   reviewsToDismiss,
   reviewsToHide,
   stripMarker,
@@ -51,6 +52,54 @@ describe("marker round-trip", () => {
 
   it("formats the exact marker string", () => {
     assert.equal(formatMarker("mobile-layout"), "<!-- weave-check:mobile-layout -->");
+  });
+});
+
+describe("markerCodec", () => {
+  const acme = markerCodec("acme-review");
+
+  it("writes only the configured prefix", () => {
+    assert.equal(acme.format("naming"), "<!-- acme-review:naming -->");
+    assert.equal(acme.append("Rename this.", "naming"), "Rename this.\n\n<!-- acme-review:naming -->");
+  });
+
+  it("reads its own markers", () => {
+    const body = acme.append("Rename this.", "naming");
+    assert.equal(acme.extractSlug(body), "naming");
+    assert.equal(acme.strip(body), "Rename this.");
+  });
+
+  // Comments already on a PR from before the rebrand carry the legacy marker;
+  // dropping them would make every old finding look new to the dedup judge.
+  it("still reads legacy weave-check markers", () => {
+    const legacy = appendMarker("Old finding.", "naming");
+    assert.equal(acme.extractSlug(legacy), "naming");
+    assert.equal(acme.strip(legacy), "Old finding.");
+  });
+
+  it("ignores another tool's marker", () => {
+    assert.equal(acme.extractSlug("Hi.\n\n<!-- other-tool:naming -->"), null);
+  });
+
+  it("is the legacy codec by default", () => {
+    assert.equal(markerCodec().format("x"), formatMarker("x"));
+  });
+
+  it("classifies threads by either marker", () => {
+    const node = (id, body) => ({
+      id,
+      isResolved: false,
+      isOutdated: false,
+      path: "a.go",
+      line: 1,
+      comments: { nodes: [{ databaseId: 1, body, pullRequestReview: { databaseId: 9, id: "R", state: "COMMENTED" } }] },
+    });
+    const threads = threadsForCheck(
+      [node("T1", appendMarker("legacy", "naming")), node("T2", acme.append("new", "naming")), node("T3", acme.append("other", "dead-code"))],
+      "naming",
+      acme,
+    );
+    assert.deepEqual(threads.map((t) => [t.threadId, t.comment]), [["T1", "legacy"], ["T2", "new"]]);
   });
 });
 

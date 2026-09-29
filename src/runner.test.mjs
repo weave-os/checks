@@ -181,6 +181,17 @@ function proseOnlyEvents() {
   ];
 }
 
+function fakeProvider(overrides = {}) {
+  return {
+    id: "fake",
+    costLabel: "fake cost",
+    dropEnv: [],
+    envFor: () => ({}),
+    resolveCost: () => ({ cost: null, error: null }),
+    ...overrides,
+  };
+}
+
 function invoke(space, overrides = {}) {
   return runClaude({
     slug: CHECK.slug,
@@ -278,23 +289,114 @@ describe("runClaude", () => {
     assert.equal(argv[settingIndex + 1], settingsPath);
   });
 
-  it("injects extraEnv into the child and strips dropEnv from it", async () => {
+  it("overlays the provider env on the child and strips its dropEnv", async () => {
     const space = workspace();
     space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
     process.env.WEAVE_CHECKS_TEST_SECRET = "do-not-leak";
+    const seen = [];
 
     try {
       await invoke(space, {
-        extraEnv: { ANTHROPIC_BASE_URL: "https://router.workweave.ai" },
-        dropEnv: ["WEAVE_CHECKS_TEST_SECRET"],
+        cluster: CLUSTER_LOW,
+        provider: fakeProvider({
+          dropEnv: ["WEAVE_CHECKS_TEST_SECRET"],
+          envFor: (args) => {
+            seen.push(args);
+            return { ANTHROPIC_BASE_URL: "https://gateway.example.com" };
+          },
+        }),
       });
     } finally {
       delete process.env.WEAVE_CHECKS_TEST_SECRET;
     }
 
     const childEnv = space.childEnv();
-    assert.equal(childEnv.get("ANTHROPIC_BASE_URL"), "https://router.workweave.ai");
+    assert.equal(childEnv.get("ANTHROPIC_BASE_URL"), "https://gateway.example.com");
     assert.equal(childEnv.has("WEAVE_CHECKS_TEST_SECRET"), false);
+    assert.deepEqual(seen, [
+      { model: CHECK.model, cluster: CLUSTER_LOW, slug: CHECK.slug, suffix: "claude" },
+    ]);
+  });
+
+  it("drops an inherited value before overlaying the provider's own for the same name", async () => {
+    const space = workspace();
+    space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
+    process.env.WEAVE_CHECKS_TEST_COLLIDE = "inherited";
+    process.env.WEAVE_CHECKS_TEST_CALLER_DROP = "inherited";
+
+    try {
+      await invoke(space, {
+        provider: fakeProvider({
+          dropEnv: ["WEAVE_CHECKS_TEST_COLLIDE"],
+          envFor: () => ({
+            WEAVE_CHECKS_TEST_COLLIDE: "from-provider",
+            // A provider cannot override the automation initiator.
+            WEAVE_PROMPT_INITIATOR: "human",
+          }),
+        }),
+        dropEnv: ["WEAVE_CHECKS_TEST_CALLER_DROP"],
+      });
+    } finally {
+      delete process.env.WEAVE_CHECKS_TEST_COLLIDE;
+      delete process.env.WEAVE_CHECKS_TEST_CALLER_DROP;
+    }
+
+    const childEnv = space.childEnv();
+    assert.equal(childEnv.get("WEAVE_CHECKS_TEST_COLLIDE"), "from-provider");
+    assert.equal(childEnv.has("WEAVE_CHECKS_TEST_CALLER_DROP"), false);
+    assert.equal(childEnv.get("WEAVE_PROMPT_INITIATOR"), "automation");
+  });
+
+  it("omits --model when the check declares none", async () => {
+    const space = workspace();
+    space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
+
+    await invoke(space, { model: null });
+
+    assert.equal(space.argv().includes("--model"), false);
+    assert.deepEqual(space.argv().slice(0, 3), ["-p", "--output-format", "stream-json"]);
+  });
+
+  it("prices the session through the provider with the terminal result event", async () => {
+    const space = workspace();
+    const events = successEvents({ verdict: VERDICT.PASS, reason: "fine" });
+    const result = JSON.parse(events[1]);
+    events[1] = JSON.stringify({ ...result, total_cost_usd: 0.31, modelUsage: { m: {} } });
+    space.stream(events);
+    const calls = [];
+
+    const invocation = await invoke(space, {
+      cluster: CLUSTER_LOW,
+      provider: fakeProvider({
+        costLabel: "test cost",
+        resolveCost: async (args) => {
+          calls.push(args);
+          return { cost: args.resultEvent.total_cost_usd, error: null };
+        },
+      }),
+    });
+
+    assert.equal(invocation.cost, 0.31);
+    assert.equal(invocation.costLabel, "test cost");
+    assert.equal(calls[0].sessionId, "sess-1");
+    assert.equal(calls[0].model, CHECK.model);
+    assert.equal(calls[0].cluster, CLUSTER_LOW);
+    assert.equal(invocation.cli.total_cost_usd, 0.31);
+    assert.deepEqual(invocation.cli.modelUsage, { m: {} });
+  });
+
+  it("reports a provider's cost error through onCostError", async () => {
+    const space = workspace();
+    space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
+    const errors = [];
+
+    const invocation = await invoke(space, {
+      provider: fakeProvider({ resolveCost: () => ({ cost: null, error: "no cost" }) }),
+      onCostError: (entry) => errors.push(entry),
+    });
+
+    assert.equal(invocation.cost, null);
+    assert.deepEqual(errors, [{ slug: CHECK.slug, suffix: "claude", error: "no cost" }]);
   });
 
   it("writes the prompt, transcript, session, and stderr artifacts", async () => {
@@ -311,11 +413,11 @@ describe("runClaude", () => {
     assert.equal(artifact("stderr"), "");
   });
 
-  it("reports an unknown cost with no error when no Weave API key is supplied", async () => {
+  it("reports an unknown cost with no error when no provider is supplied", async () => {
     const space = workspace();
     space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
 
-    const invocation = await invoke(space, { weaveAPIKey: null });
+    const invocation = await invoke(space, { provider: null });
 
     // Null (unknown), never 0: a skipped lookup must not present a billed run
     // as verified-free. And a skipped lookup is not a failure to report.
@@ -517,6 +619,17 @@ describe("promptFor", () => {
     assert.ok(!prompt.includes("Do NOT repeat a finding"));
   });
 
+  it("names the check with the configured product name", () => {
+    const space = workspace();
+    const prompt = promptFor(CHECK, {
+      repoDir: space.repoDir,
+      diff: DIFF,
+      stat: STAT,
+      productName: "Acme Review",
+    });
+    assert.match(prompt, /^You are running the advisory Acme Review "Demo Check" on a pull request\./);
+  });
+
   it("includes the history section and the don't-repeat rule when given one", () => {
     const space = workspace();
     const prompt = promptFor(CHECK, {
@@ -565,7 +678,7 @@ describe("evaluateCheck", () => {
       addedLines: new Map([["app/main.go", new Set([1, 2])]]),
       schemaText: SCHEMA_TEXT,
       settingSources: null,
-      weaveAPIKey: null,
+      provider: null,
       ...overrides,
     });
   }

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { routerEnvironment, routerSessionCost } from "./router.mjs";
+import {
+  routerEnvironment,
+  routerSessionCost,
+  weaveRouterProvider,
+} from "./providers/weave-router.mjs";
 
 const SESSION_ID = "a2c7f8a4-6bcb-4c17-a0c1-e2c3d0877fc1";
 const ROUTER_KEY = "rk_test";
@@ -303,5 +307,56 @@ describe("routerSessionCost", () => {
     assert.equal(cost, 0.000042);
     assert.equal(error, null);
     assert.equal(calls, 2);
+  });
+});
+
+describe("weaveRouterProvider", () => {
+  const provider = () => weaveRouterProvider({ routerKey: ROUTER_KEY, weaveAPIKey: WEAVE_API_KEY });
+
+  it("sends each check's cluster as the force-cluster header", () => {
+    const env = provider().envFor({ model: "claude-haiku-4-5", cluster: "high" });
+    assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Force-Cluster: high/);
+    assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Router-Key: rk_test/);
+  });
+
+  // The Weave API key only feeds the coordinator's cost lookup; the router key
+  // already rides in a header; a direct Anthropic credential would compete
+  // with the router placeholder.
+  it("keeps both Weave secrets and direct Anthropic credentials out of the child", () => {
+    assert.deepEqual(provider().dropEnv, [
+      "WEAVE_ROUTER_KEY",
+      "WEAVE_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ]);
+  });
+
+  it("rejects a check with no cluster", () => {
+    assert.match(provider().validateCheck({ cluster: null }), /requires a cluster/);
+    assert.equal(provider().validateCheck({ cluster: "low" }), null);
+  });
+
+  it("prices through the session-cost endpoint, labelled as router cost", async () => {
+    const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 1_500_000 })]);
+    const routed = weaveRouterProvider({
+      routerKey: ROUTER_KEY,
+      weaveAPIKey: WEAVE_API_KEY,
+      costOptions: { fetchFn },
+    });
+    assert.equal(routed.costLabel, "router cost");
+    // The CLI's own total_cost_usd is ignored: under the router it prices the
+    // anchor model, not the one that served the turn.
+    const { cost, error } = await routed.resolveCost({
+      sessionId: SESSION_ID,
+      resultEvent: { total_cost_usd: 9.99 },
+    });
+    assert.equal(cost, 1.5);
+    assert.equal(error, null);
+    assert.match(fetchFn.urls[0], /^https:\/\/app\.workweave\.ai\/api\/v1\/router\/sessions\//);
+  });
+
+  it("requires both keys", () => {
+    assert.throws(() => weaveRouterProvider({ weaveAPIKey: WEAVE_API_KEY }), /requires WEAVE_ROUTER_KEY/);
+    assert.throws(() => weaveRouterProvider({ routerKey: ROUTER_KEY }), /requires WEAVE_API_KEY/);
   });
 });

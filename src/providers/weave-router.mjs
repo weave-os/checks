@@ -1,7 +1,7 @@
-// Router integration for the Weave Checks workflow (.github/workflows/weave-checks.yml).
+// Weave Router provider: the checks talk to the Weave Router instead of
+// api.anthropic.com. Selected with `provider: weave-router`.
 //
-// Two separate concerns, both of which exist because the checks no longer talk
-// to Anthropic directly:
+// Two separate concerns:
 //
 //   1. routerEnvironment() — the env that points the Claude Code CLI at the
 //      Weave Router instead of api.anthropic.com.
@@ -13,15 +13,15 @@
 // Code's local table for the model it *asked* for, so it cannot account for the
 // model the router actually selected, a provider-binding fallback, or Weave's
 // pricing. The cost column on every check run is the most-watched number in
-// this workflow, so it reads the committed per-session total from the router's
+// this action, so it reads the committed per-session total from the router's
 // own telemetry instead.
 //
 // Kept as a plain ESM module with no dependencies, like parse.mjs and
-// history.mjs, so the workflow can run it with bare `node` and so the retry
+// history.mjs, so the action can run it with bare `node` and so the retry
 // and error-mapping rules are unit testable (router.test.mjs).
 
-const ROUTER_BASE_URL = "https://router.workweave.ai";
-const WEAVE_API_BASE_URL = "https://app.workweave.ai/api/v1";
+export const ROUTER_BASE_URL = "https://router.workweave.ai";
+export const WEAVE_API_BASE_URL = "https://app.workweave.ai/api/v1";
 const USD_MICROS_PER_USD = 1_000_000;
 
 // Router telemetry is written asynchronously, so a session that has only just
@@ -29,14 +29,14 @@ const USD_MICROS_PER_USD = 1_000_000;
 // attempt, so the first attempt is immediate. With the one-second per-request
 // deadline below, a completely stalled cost endpoint takes at most ~13.75s
 // (six request deadlines plus these sleeps) -- long enough to outlast the
-// write, short enough that 17 checks waiting on it in parallel never dominate
+// write, short enough that a dozen checks waiting on it in parallel never dominate
 // the job's wall-clock.
 const COST_RETRY_DELAYS_MS = [0, 250, 500, 1000, 2000, 4000];
 
 // Jitter (the standard fix for synchronized retry storms) is applied at the
-// call site below via Math.random(). Without it, 17 parallel checks that all
+// call site below via Math.random(). Without it, a dozen parallel checks that all
 // start their retry ladder off the same transient 429/5xx would re-fire in
-// lockstep, turning one outage into 17 synchronized reconnect attempts.
+// lockstep, turning one outage into a dozen synchronized reconnect attempts.
 // Reduction factor so the jittered delay still averages near the base --
 // full jitter (delay * random()) would compress the ladder into the cheap end.
 const RETRY_JITTER_FRACTION = 0.5;
@@ -60,9 +60,8 @@ const COST_REQUEST_TIMEOUT_MS = 1000;
 // ever added on top of a hint, never subtracted -- see the retry loop below).
 const MAX_RETRY_AFTER_MS = 8000;
 
-// Parses the `Retry-After` header the rate limiter sets on a 429 (see
-// backend's limitMiddleware, which always emits delay-seconds via
-// strconv.Itoa, never an HTTP-date) into milliseconds. Returns null for a
+// Parses the `Retry-After` header the rate limiter sets on a 429 (the Weave
+// API always emits delay-seconds, never an HTTP-date) into milliseconds. Returns null for a
 // missing, non-numeric, or non-positive value so the caller falls back to
 // the fixed retry ladder unchanged -- a malformed or absent header should
 // never make cost lookups worse than they were before this hint existed.
@@ -80,9 +79,7 @@ function parseRetryAfterMs(headerValue) {
 // personal email so that router telemetry, cost rollups, and per-user
 // reports that group by this header attribute CI spend to the Weave Checks
 // service and not to whichever engineer happened to mint the router key.
-// Mirrors the `X-Weave-User-Email` header value the prod installer and
-// `cli/wv/commands/router.py` write for an engineer's local Claude Code.
-const WEAVE_CHECKS_USER_EMAIL = "weave-checks@workweave.ai";
+export const WEAVE_CHECKS_USER_EMAIL = "weave-checks@workweave.ai";
 
 // Env for the Claude Code CLI. ANTHROPIC_BASE_URL moves the traffic; the router
 // key rides in its own header, exactly as the `npx @weave-os/router` installer
@@ -99,24 +96,26 @@ const WEAVE_CHECKS_USER_EMAIL = "weave-checks@workweave.ai";
 // used as the anchor the router prices the turn against -- kept for a stable
 // per-check cost comparison across runs, not because it pins the serving model
 // anymore. Which model actually serves the review is constrained instead by
-// `x-weave-force-cluster` (router#917), set here to the check's declared
-// `cluster`: the router's HMM policy sidecar picks its own best-scoring model
-// from within that cluster on every turn, so review quality tracks the live
-// roster instead of one model going stale. `cluster` is required (see
-// parse.mjs), so this header is always present.
-export function routerEnvironment(routerKey, cluster) {
+// `X-Weave-Force-Cluster`, set here to the check's declared `cluster`: the
+// router's routing policy picks its own best-scoring model from within that
+// cluster on every turn, so review quality tracks the live roster instead of
+// one model going stale. The provider rejects a check without a cluster (see
+// validateCheck below), so this header is always present.
+export function routerEnvironment(
+  routerKey,
+  cluster,
+  { baseUrl = ROUTER_BASE_URL, userEmail = WEAVE_CHECKS_USER_EMAIL } = {},
+) {
   return {
-    ANTHROPIC_BASE_URL: ROUTER_BASE_URL,
+    ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_API_KEY: "placeholder-router-authenticates-via-header",
     ANTHROPIC_CUSTOM_HEADERS: [
       `X-Weave-Router-Key: ${routerKey}`,
       `X-Weave-Force-Cluster: ${cluster}`,
       // Identifies the row in router telemetry as a Weave Checks CI
       // invocation under the service mailbox, not under whichever
-      // engineer minted the router key. Matches the header the prod
-      // installer writes for a developer's own Claude Code (see
-      // cli/wv/commands/router.py).
-      `X-Weave-User-Email: ${WEAVE_CHECKS_USER_EMAIL}`,
+      // engineer minted the router key.
+      `X-Weave-User-Email: ${userEmail}`,
       // Tags the traffic as a CI invocation so it stays separable from
       // engineers' interactive sessions in the Router report.
       "X-App: weave-checks",
@@ -152,6 +151,7 @@ export async function routerSessionCost(
     fetchFn = fetch,
     sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     retryDelaysMs = COST_RETRY_DELAYS_MS,
+    apiBaseUrl = WEAVE_API_BASE_URL,
   } = {},
 ) {
   if (typeof sessionId !== "string" || sessionId === "") {
@@ -161,7 +161,7 @@ export async function routerSessionCost(
     };
   }
 
-  const url = `${WEAVE_API_BASE_URL}/router/sessions/${encodeURIComponent(sessionId)}/cost`;
+  const url = `${apiBaseUrl}/router/sessions/${encodeURIComponent(sessionId)}/cost`;
   let lastError = null;
   // Overrides the ladder's next delay when the previous attempt's 429 carried
   // a `Retry-After` hint -- see parseRetryAfterMs() above. `null` means "no
@@ -178,8 +178,8 @@ export async function routerSessionCost(
     const baseDelayMs = hintMs ?? delayMs;
     retryAfterHintMs = null;
     // Jitter the delay (excluding the 0-immediate first attempt) so a
-    // transient outage does not turn 17 checks firing in lockstep into
-    // 17 synchronized reconnect storms. A Retry-After hint is the server's
+    // transient outage does not turn a dozen checks firing in lockstep into
+    // a dozen synchronized reconnect storms. A Retry-After hint is the server's
     // authoritative floor for its rate-limit bucket, so it only gets jitter
     // added on top -- shortening it the way the ladder's own guess gets
     // shortened would retry before the bucket refills and draw another 429.
@@ -257,8 +257,8 @@ export async function routerSessionCost(
       response.status === 404 || response.status === 429 || response.status >= 500;
     if (!retryable) break;
 
-    // A 429 carries the rate limiter's own `Retry-After` (backend's
-    // limitMiddleware always sets this on the org's bucket, in seconds) --
+    // A 429 carries the rate limiter's own `Retry-After` (the Weave API
+    // always sets this on the org's bucket, in seconds) --
     // use it for the next iteration's delay instead of guessing from the
     // fixed ladder. A 404/5xx has no such hint and falls through to the
     // ladder unchanged.
@@ -268,4 +268,52 @@ export async function routerSessionCost(
   }
 
   return { cost: null, error: lastError };
+}
+
+// Environment names the provider reads its two secrets from. Named once so
+// the credential lookup and the child-environment scrub cannot disagree.
+export const ROUTER_KEY_ENV = "WEAVE_ROUTER_KEY";
+export const WEAVE_API_KEY_ENV = "WEAVE_API_KEY";
+
+// Builds the provider. Both keys are required: without the router key every
+// agent call fails at the first request, and without the Weave API key every
+// check completes with an unknown cost. Failing at construction makes either
+// misconfiguration obvious instead of surfacing as a row of identical neutral
+// checks.
+export function weaveRouterProvider({
+  routerKey,
+  weaveAPIKey,
+  baseUrl = ROUTER_BASE_URL,
+  apiBaseUrl = WEAVE_API_BASE_URL,
+  userEmail = WEAVE_CHECKS_USER_EMAIL,
+  costOptions = {},
+} = {}) {
+  if (typeof routerKey !== "string" || routerKey === "") {
+    throw new Error(`provider weave-router requires ${ROUTER_KEY_ENV}`);
+  }
+  if (typeof weaveAPIKey !== "string" || weaveAPIKey === "") {
+    throw new Error(`provider weave-router requires ${WEAVE_API_KEY_ENV} for session cost`);
+  }
+  return Object.freeze({
+    id: "weave-router",
+    costLabel: "router cost",
+    // Neither secret is needed by the CLI child: the router key already rides
+    // in ANTHROPIC_CUSTOM_HEADERS, and the Weave API key is only for the
+    // coordinator's cost lookup. Any direct Anthropic credential is dropped
+    // too, so it cannot take precedence over the router placeholder and move
+    // a check onto per-API billing.
+    dropEnv: [
+      ROUTER_KEY_ENV,
+      WEAVE_API_KEY_ENV,
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ],
+    envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { baseUrl, userEmail }),
+    resolveCost: ({ sessionId }) =>
+      routerSessionCost(sessionId, weaveAPIKey, { apiBaseUrl, ...costOptions }),
+    validateCheck: (check) =>
+      check.cluster === null || check.cluster === undefined
+        ? "provider weave-router requires a cluster in the check's frontmatter"
+        : null,
+  });
 }

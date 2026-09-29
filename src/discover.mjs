@@ -1,57 +1,71 @@
-// Discovers .weave-checks/*.md and emits the check list for weave-checks.yml.
+// Discovers <checks-dir>/*.md and builds the check matrix.
 //
-// Usage: node .github/checks/discover.mjs <checks-dir>
-//
-// Writes `matrix` and `count` to $GITHUB_OUTPUT (or stdout when run locally).
-// Exits non-zero on any malformed check so discovery fails loudly rather than
+// discoverChecks() is what the CLI's `list`/`prepare`/`run` share. Run as a
+// script (`node src/discover.mjs <checks-dir>`), it writes `matrix` and
+// `count` to $GITHUB_OUTPUT (or stdout) with today's strict Weave policy.
+// Either way a malformed check throws, so discovery fails loudly rather than
 // silently running a smaller set of checks than the repo declares.
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { buildMatrix, isCheckFile } from "./parse.mjs";
+import { WEAVE_POLICY, buildMatrix, isCheckFile } from "./parse.mjs";
 
-const checksDir = process.argv[2] ?? ".weave-checks";
+export const DEFAULT_CHECKS_DIR = ".weave-checks";
 
-let entries;
-try {
-  entries = fs.readdirSync(checksDir);
-} catch (err) {
-  console.error(`failed to read ${checksDir}: ${err.message}`);
-  process.exit(1);
+// Reads and validates every check in `checksDir`. `checksDir` is recorded in
+// each entry's `path` as given, so a repo-relative directory yields
+// repo-relative paths the runner can join onto the repo root.
+export function discoverChecks(checksDir, { policy = WEAVE_POLICY, validateCheck = null } = {}) {
+  let entries;
+  try {
+    entries = fs.readdirSync(checksDir);
+  } catch (err) {
+    throw new Error(`failed to read ${checksDir}: ${err.message}`);
+  }
+  const files = entries
+    .filter((name) => isCheckFile(name))
+    .sort()
+    .map((name) => ({
+      path: path.posix.join(checksDir.split(path.sep).join("/"), name),
+      text: fs.readFileSync(path.join(checksDir, name), "utf8"),
+    }));
+  const matrix = buildMatrix(files, policy, validateCheck);
+  if (matrix.length === 0) {
+    throw new Error(`no checks found in ${checksDir}`);
+  }
+  return matrix;
 }
 
-const files = entries
-  .filter((name) => isCheckFile(name))
-  .map((name) => ({
-    path: `${checksDir}/${name}`,
-    text: fs.readFileSync(path.join(checksDir, name), "utf8"),
-  }));
-
-let matrix;
-try {
-  matrix = buildMatrix(files);
-} catch (err) {
-  console.error(`check discovery failed: ${err.message}`);
-  process.exit(1);
+// One human-readable line per check, shared by the script below and the CLI.
+export function describeEntry(entry) {
+  return `${entry.slug}: "${entry.name}" (${entry.model ?? "default model"}, ${entry.cluster ?? "no cluster"})`;
 }
 
-if (matrix.length === 0) {
-  console.error(`no checks found in ${checksDir}`);
-  process.exit(1);
+function main() {
+  const checksDir = process.argv[2] ?? DEFAULT_CHECKS_DIR;
+  let matrix;
+  try {
+    matrix = discoverChecks(checksDir);
+  } catch (err) {
+    console.error(`check discovery failed: ${err.message}`);
+    process.exit(1);
+  }
+  for (const entry of matrix) {
+    console.error(`discovered ${describeEntry(entry)}`);
+  }
+  const output = [
+    `matrix=${JSON.stringify({ check: matrix })}`,
+    `count=${matrix.length}`,
+  ].join("\n");
+  if (process.env.GITHUB_OUTPUT === undefined) {
+    console.log(output);
+  } else {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}\n`);
+  }
 }
 
-for (const entry of matrix) {
-  console.error(`discovered ${entry.slug}: "${entry.name}" (${entry.model}, ${entry.cluster})`);
-}
-
-const output = [
-  `matrix=${JSON.stringify({ check: matrix })}`,
-  `count=${matrix.length}`,
-].join("\n");
-
-if (process.env.GITHUB_OUTPUT === undefined) {
-  console.log(output);
-} else {
-  fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}\n`);
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

@@ -9,37 +9,47 @@
 // parses the response, and makes the pure decisions: what to show the agent,
 // which resolved-thread ids are real, and which reviews are now fully addressed.
 
+import { LEGACY_MARKER_PREFIX } from "./branding.mjs";
 import { REVIEW_STATE } from "./parse.mjs";
 
-// Anchored to the END of the body (the last marker paragraph only): when a
-// generated comment quotes another `weave-check` marker that was already
-// committed to the PR -- e.g. the audit reply on a thread being resolved
-// inlines the original flagged comment text verbatim -- a loose
+// Builds the marker helpers for one configured prefix.
+//
+// Writes only `<!-- <prefix>:<slug> -->`, but reads both the configured
+// prefix and the legacy `weave-check` one, so comments posted before a
+// consumer rebranded are still recognized as that check's history.
+//
+// The read regex is anchored to the END of the body (the last marker
+// paragraph only): when a generated comment quotes another marker that was
+// already committed to the PR -- e.g. the audit reply on a thread being
+// resolved inlines the original flagged comment text verbatim -- a loose
 // anywhere-in-body regex would match the embedded marker before reaching the
-// marker appendMarker itself appended, and threadsForCheck would then
+// marker append() itself appended, and threadsForCheck would then
 // mis-classify the comment under the wrong check, dropping it from history.
-// appendMarker always writes the marker as the trailing paragraph, so
-// requiring it at the end of a line is exactly that same invariant read back.
-const TRAILING_MARKER = /<!-- weave-check:([a-z0-9-]+) -->\s*$/;
-
-export function formatMarker(slug) {
-  return `<!-- weave-check:${slug} -->`;
+// append() always writes the marker as the trailing paragraph, so requiring
+// it at the end of a line is exactly that same invariant read back.
+//
+// Callers validate the prefix (branding.mjs) before it reaches this regex.
+export function markerCodec(prefix = LEGACY_MARKER_PREFIX) {
+  const prefixes = [...new Set([prefix, LEGACY_MARKER_PREFIX])];
+  const trailing = new RegExp(`<!-- (?:${prefixes.join("|")}):([a-z0-9-]+) -->\\s*$`);
+  const format = (slug) => `<!-- ${prefix}:${slug} -->`;
+  return Object.freeze({
+    format,
+    // Appends the marker as its own trailing paragraph so it survives
+    // GitHub's Markdown rendering as an invisible comment rather than
+    // corrupting a ```suggestion block if placed inside one.
+    append: (body, slug) => `${body}\n\n${format(slug)}`,
+    strip: (body) => body.replace(trailing, "").trim(),
+    extractSlug: (body) => trailing.exec(body)?.[1] ?? null,
+  });
 }
 
-// Appends the marker as its own trailing paragraph so it survives GitHub's
-// Markdown rendering as an invisible comment rather than corrupting a
-// ```suggestion block if placed inside one.
-export function appendMarker(body, slug) {
-  return `${body}\n\n${formatMarker(slug)}`;
-}
+const DEFAULT_CODEC = markerCodec();
 
-export function stripMarker(body) {
-  return body.replace(TRAILING_MARKER, "").trim();
-}
-
-export function extractMarkerSlug(body) {
-  return TRAILING_MARKER.exec(body)?.[1] ?? null;
-}
+export const formatMarker = DEFAULT_CODEC.format;
+export const appendMarker = DEFAULT_CODEC.append;
+export const stripMarker = DEFAULT_CODEC.strip;
+export const extractMarkerSlug = DEFAULT_CODEC.extractSlug;
 
 // GraphQL query for every review thread on the PR, paginated. `comments(first: 1)`
 // only needs the thread's opening comment: that's the one worker.mjs tags with
@@ -100,12 +110,12 @@ export function extractThreadsPage(data) {
 // Normalizes raw GraphQL thread nodes into the shape the rest of this module
 // (and worker.mjs) works with, keeping only threads this check itself opened
 // -- identified by the marker on the thread's first comment.
-export function threadsForCheck(rawNodes, slug) {
+export function threadsForCheck(rawNodes, slug, codec = DEFAULT_CODEC) {
   const threads = [];
   for (const node of rawNodes) {
     const opener = node.comments?.nodes?.[0];
     if (opener === undefined) continue;
-    if (extractMarkerSlug(opener.body) !== slug) continue;
+    if (codec.extractSlug(opener.body) !== slug) continue;
     const review = opener.pullRequestReview;
     const reviewId = review?.databaseId ?? null;
     if (reviewId === null) continue; // Not something we can dismiss later; ignore.
@@ -122,7 +132,7 @@ export function threadsForCheck(rawNodes, slug) {
       commentId: opener.databaseId ?? null,
       path: node.path,
       line: node.line ?? node.originalLine ?? null,
-      comment: stripMarker(opener.body),
+      comment: codec.strip(opener.body),
     });
   }
   return threads;

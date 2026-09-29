@@ -7,7 +7,7 @@
 // of it succeeds. Before this module every such blip was terminal -- the throw
 // out of `github()` escaped the per-check try block (it happened inside a
 // cosmetic aggregate-table repaint, which sat outside it), unwound the worker
-// pool, and abandoned all 17 checks. One transient 503 cost a whole run.
+// pool, and abandoned every check. One transient 503 cost a whole run.
 //
 // The policy lives here, in one place, so that (a) it is unit testable
 // (githubapi.test.mjs) without standing up a fake GitHub, and (b) the REST and
@@ -31,7 +31,7 @@
 // job's whole timeout.
 const RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 16000];
 
-// Same reasoning as router.mjs: with WEAVE_CHECK_PARALLEL=16, sixteen checks
+// Same reasoning as the Router cost lookup: with a 16-wide pool, sixteen checks
 // that trip the same transient error would otherwise re-fire in lockstep and
 // turn one blip into a synchronized retry storm against the API that is
 // already struggling. Reduction factor rather than full jitter so the
@@ -209,7 +209,7 @@ export async function requestWithRetry(
     logFn = (message) => console.error(message),
     // What to call this request in retry logs. The caller passes something
     // human-readable ("PATCH repos/o/r/check-runs/123") because a bare URL in
-    // a job log doesn't say which of 17 checks was talking.
+    // a job log doesn't say which check was talking.
     label = init?.method ?? "GET",
     // Optional body-level classification for an otherwise-ok response, used by
     // the GraphQL path where a transient failure arrives as HTTP 200.

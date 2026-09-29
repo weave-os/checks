@@ -1,5 +1,5 @@
 // The GitHub-agnostic half of a Weave Check run: spawn the Claude CLI, parse
-// its stream-json output, price the session against the router, and turn the
+// its stream-json output, price the session through the provider, and turn the
 // structured result into a verdict validated against the diff.
 //
 // Two entry points consume this module:
@@ -7,19 +7,20 @@
 //   - worker.mjs   -- the CI coordinator. Adds everything GitHub: check runs,
 //                     review threads, resolution/dedup judges, the aggregate
 //                     status table.
-//   - local.mjs    -- `wv checks run`. Runs the same review against a local
-//                     `git diff` and reports to the terminal.
+//   - local.mjs    -- `weave-checks run`. Runs the same review against a
+//                     local `git diff` and reports to the terminal.
 //
 // Everything here is deliberately free of GitHub state so that the local path
 // cannot drift from what CI actually does: both callers run the SAME
 // invocation argv, the SAME prompt scaffolding, and the SAME verdict
-// pipeline. The two callers differ only in what they pass in (`extraEnv`,
+// pipeline. The two callers differ only in what they pass in (`provider`,
 // `settingSources`, `historySection`) and what they do with the result.
 //
 // Dependency-free ESM by the same rule as parse.mjs/history.mjs: `node
 // runner.mjs` needs no install step. It imports parse.mjs and streamsplit.mjs
-// (verdict + transcript parsing) and router.mjs (session cost); it must never
-// import history.mjs, which is review-thread state and therefore GitHub-only.
+// (verdict + transcript parsing) and provider.mjs's env helper only. It must
+// never import history.mjs, which is review-thread state and therefore
+// GitHub-only, nor a concrete provider: the caller picks one and passes it in.
 
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -35,11 +36,9 @@ import {
   parseStructuredOutput,
   validateResult,
 } from "./parse.mjs";
-import { routerSessionCost } from "./router.mjs";
+import { DEFAULT_BRANDING } from "./branding.mjs";
+import { childEnvironment } from "./provider.mjs";
 import { splitStreamJson } from "./streamsplit.mjs";
-
-const PROMPT_INITIATOR_ENV = "WEAVE_PROMPT_INITIATOR";
-const AUTOMATION_PROMPT_INITIATOR = "automation";
 
 // Every artifact a single agent invocation leaves behind is `<slug>.<suffix>`
 // under the run's temp dir, so CI's diagnostics upload and the local
@@ -52,38 +51,39 @@ export function resultPath(tempDir, slug, suffix) {
 // from it. Writes the prompt, transcript, session id, and stderr to
 // `tempDir` as a side effect.
 //
-// The caller controls the two things that differ between CI and local:
+// The caller controls the things that differ between CI and local:
 //
-//   - `extraEnv`       -- env injected into the child. CI passes
-//                         routerEnvironment(); local passes no routing env of
-//                         its own because its generated `settingsPath` carries
-//                         the user's router env and forced cluster.
+//   - `provider`       -- the provider.mjs contract: the env overlaid on the
+//                         child, the secrets scrubbed from it, and how the
+//                         session is priced. Null means no overlay and an
+//                         unknown cost.
 //   - `settingSources` -- when a string (CI passes ""), it is forwarded as
 //                         `--setting-sources <value>` so a runner's settings,
 //                         hooks, and plugins can't influence a check. When
 //                         null (local), the flag is omitted. Local can also
-//                         pass `settingsPath`: a generated copy of the user's
-//                         settings with the router env and this check's
-//                         forced cluster, mirroring `wv mr claude`.
+//                         pass `settingsPath`: a generated settings overlay
+//                         for this check's cluster.
+//   - `dropEnv`        -- extra names to scrub on top of the provider's own.
 //
-// `weaveAPIKey` is optional: without it the router cost lookup is skipped
-// entirely and `cost` comes back null (rendered as "—"), never 0. `onCostError`
-// receives `{ slug, suffix, error }` when a lookup was attempted and failed,
-// so the caller can surface it wherever its own summary lives.
+// `model` null omits `--model`, so the CLI's own default serves the check.
+// `cost` is null (rendered as "—") whenever it is unknown, never 0.
+// `onCostError` receives `{ slug, suffix, error }` when the provider could not
+// price the session, so the caller can surface it wherever its own summary
+// lives.
 export async function runClaude({
   slug,
   suffix,
   model,
+  cluster = null,
   schemaText,
   promptText,
   maxBudget,
   repoDir,
   tempDir,
-  extraEnv = {},
+  provider = null,
   settingSources = null,
   settingsPath = null,
   dropEnv = [],
-  weaveAPIKey = null,
   onCostError = null,
 }) {
   const promptPath = resultPath(tempDir, slug, `${suffix}.prompt.txt`);
@@ -101,8 +101,7 @@ export async function runClaude({
   // faithful record of an invocation without an extra rerun.
   const cliArgs = [
     "-p",
-    "--model",
-    model,
+    ...(model === null || model === undefined ? [] : ["--model", model]),
     // Stream-json requires --verbose in print mode. The verbose flag is also
     // what forces the per-turn `assistant` events to ship (without it the
     // stream collapses to just init + result).
@@ -121,36 +120,31 @@ export async function runClaude({
     "Bash(git show *)",
     ...(settingSources === null ? [] : ["--setting-sources", settingSources]),
     // `--settings` takes highest precedence and is merged over whatever
-    // `--setting-sources` loaded. Local passes a generated file here (the
-    // engineer's own settings plus a forced router cluster); CI never does.
+    // `--setting-sources` loaded. Local may pass a generated file here (a
+    // per-cluster overlay); CI never does.
     ...(settingsPath === null ? [] : ["--settings", settingsPath]),
     "--no-session-persistence",
     "--max-budget-usd",
-    // Enforced by the CLI against its own local estimate, which the router
-    // makes approximate (see routerSessionCost). Kept anyway: it is the
-    // only in-process runaway guard, and an approximate ceiling on a
-    // wedged agent is worth more than no ceiling. The number reported to
-    // the caller is the router's, never this one.
+    // Enforced by the CLI against its own local estimate, which a routing
+    // provider makes approximate. Kept anyway: it is the only in-process
+    // runaway guard, and an approximate ceiling on a wedged agent is worth
+    // more than no ceiling. The number reported to the caller is the
+    // provider's.
     maxBudget,
   ];
 
   const processResult = await new Promise((resolve) => {
-    // `dropEnv` names variables the coordinator needs but the CLI child does
-    // not -- CI drops its Weave API key, which only the post-run cost lookup
-    // uses. A spawn env value of `undefined` omits the var from the child's
-    // actual environment (Node's child_process contract), which is simpler
-    // here than hand-rolling an allowlist of the vars the child DOES need.
-    const childEnv = { ...process.env };
-    for (const name of dropEnv) {
-      delete childEnv[name];
-    }
+    // The provider's `dropEnv` names variables the coordinator needs but the
+    // CLI child does not (Weave Router drops the Weave API key, which only
+    // the post-run cost lookup uses). Scrubbing is simpler here than
+    // hand-rolling an allowlist of the vars the child DOES need.
     const child = spawn("claude", cliArgs, {
       cwd: repoDir,
-      env: {
-        ...childEnv,
-        ...extraEnv,
-        [PROMPT_INITIATOR_ENV]: AUTOMATION_PROMPT_INITIATOR,
-      },
+      env: childEnvironment({
+        baseEnv: process.env,
+        dropEnv: [...(provider?.dropEnv ?? []), ...dropEnv],
+        providerEnv: provider?.envFor({ model, cluster, slug, suffix }) ?? {},
+      }),
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -184,13 +178,13 @@ export async function runClaude({
   // the stream carried no terminal event (CLI crashed before emitting one)
   // is treated by every reader the same as a malformed stdout: it reports
   // an unknown cost and a neutral outcome.
-  // No Weave API key means no cost lookup was even attempted -- report an
-  // unknown cost with no error, since "we chose not to ask" is not a failure
-  // the caller should surface as one.
+  // No provider means no cost lookup was even attempted -- report an unknown
+  // cost with no error, since "we chose not to ask" is not a failure the
+  // caller should surface as one.
   const { cost, error } =
-    weaveAPIKey === null
+    provider === null
       ? { cost: null, error: null }
-      : await routerSessionCost(sessionId, weaveAPIKey);
+      : await provider.resolveCost({ sessionId, resultEvent, model, cluster });
   if (error !== null) {
     onCostError?.({ slug, suffix, error });
   }
@@ -201,6 +195,7 @@ export async function runClaude({
     cli: synthesizeCli(resultEvent),
     cost,
     costError: error,
+    costLabel: provider?.costLabel ?? null,
     transcript,
   };
 }
@@ -225,6 +220,11 @@ export function synthesizeCli(resultEvent) {
     permission_denials: resultEvent.permission_denials ?? [],
     num_turns: resultEvent.num_turns,
     duration_ms: resultEvent.duration_ms,
+    // Kept for providers with no billing API of their own, which report the
+    // CLI's client-side estimate (providers/client-cost.mjs), and for the
+    // per-model breakdown in diagnostics.
+    total_cost_usd: resultEvent.total_cost_usd,
+    modelUsage: resultEvent.modelUsage,
   };
 }
 
@@ -303,7 +303,7 @@ export function normalize(invocation, addedLines) {
   if (invocation.code !== 0) {
     // A non-zero exit doesn't necessarily mean the agent spent nothing --
     // `--max-budget-usd` exits 1 after the tokens were already billed, and the
-    // router recorded that spend regardless of how the CLI terminated. Read
+    // provider recorded that spend regardless of how the CLI terminated. Read
     // the cost the same way every other path does rather than reporting a run
     // that hit budget as free. The session ID still arrived via the
     // stream-json events before the crash, so the cost is almost always
@@ -414,10 +414,19 @@ export function validateAndFinalize(resultObject, invocation, cli, addedLines) {
 // worker.mjs has. When it is null (the local path) both the section and the
 // don't-repeat instruction are omitted rather than shown as an empty block,
 // since a local run has no prior comments to repeat.
-export function promptFor(check, { repoDir, diff, stat, historySection = null }) {
+export function promptFor(
+  check,
+  {
+    repoDir,
+    diff,
+    stat,
+    historySection = null,
+    productName = DEFAULT_BRANDING.productName,
+  },
+) {
   const criteria = readFileSync(path.join(repoDir, check.path), "utf8");
   return [
-    `You are running the advisory Weave Check "${check.name}" on a pull request.`,
+    `You are running the advisory ${productName} "${check.name}" on a pull request.`,
     "",
     "Review ONLY changed lines in the diff below.",
     "- Read adjacent repository files only when needed to judge a changed line.",
@@ -501,11 +510,11 @@ export async function evaluateCheck({
   addedLines,
   schemaText,
   historySection = null,
-  extraEnv,
+  productName = DEFAULT_BRANDING.productName,
+  provider = null,
   settingSources,
   settingsPath = null,
   dropEnv,
-  weaveAPIKey,
   maxBudget = "2",
   onAttempt,
   onCostError,
@@ -515,16 +524,16 @@ export async function evaluateCheck({
       slug: check.slug,
       suffix: "claude",
       model: check.model,
+      cluster: check.cluster,
       schemaText,
-      promptText: promptFor(check, { repoDir, diff, stat, historySection }),
+      promptText: promptFor(check, { repoDir, diff, stat, historySection, productName }),
       maxBudget,
       repoDir,
       tempDir,
-      extraEnv,
+      provider,
       settingSources,
       settingsPath,
       dropEnv,
-      weaveAPIKey,
       onCostError,
     });
 
@@ -557,16 +566,14 @@ export async function evaluateCheck({
   };
 }
 
-// Reads the router-resolved cost off a finished agent invocation. runClaude
-// attaches it (see there): it is the committed per-session total from the
-// router's own telemetry, NOT the CLI's `total_cost_usd`, which under the
-// router prices the anchor model rather than the one that actually served the
-// turn. A direct passthrough -- routerSessionCost() (router.mjs) already
-// guarantees `cost` is either null (lookup couldn't produce a number, or was
-// never attempted) or a finite number, so this never needs to re-validate
-// that. Null is never collapsed to 0, exactly as invocationDuration() does
-// for a missing duration. The total is summed across all agent phases by
-// totalCost().
+// Reads the provider-resolved cost off a finished agent invocation. runClaude
+// attaches it (see there): under Weave Router it is the committed per-session
+// total from the router's own telemetry, otherwise the CLI's client-reported
+// estimate. A direct passthrough -- every provider guarantees `cost` is either
+// null (lookup couldn't produce a number, or was never attempted) or a finite
+// number, so this never needs to re-validate that. Null is never collapsed to
+// 0, exactly as invocationDuration() does for a missing duration. The total is
+// summed across all agent phases by totalCost().
 export function invocationCost(invocation) {
   return invocation.cost;
 }
@@ -604,7 +611,7 @@ export function totalCost(values) {
   const sum = sumFiniteNumbers(values);
   if (sum === null) return null;
   // Round to 4 dp -- dollars that small don't render meaningfully below two
-  // places anyway, but the aggregation needs extra precision so 17 checks
+  // places anyway, but the aggregation needs extra precision so a dozen checks
   // don't drift by a penny. The display formatter below rounds again to 2dp.
   return Math.round(sum * 10000) / 10000;
 }

@@ -150,12 +150,13 @@ function renderSessionBlock(session, byteBudget) {
   if (text === "" && (typeof session.sessionId !== "string" || session.sessionId === "")) {
     return null;
   }
-  // The session header always shows the router-reported cost for this
-  // attempt, when one was captured. This is the authoritative number --
-  // distinct from `total_cost_usd` on the terminal result event, which
-  // is the CLI's local accounting.
+  // The session header shows the provider-reported cost for this attempt,
+  // when one was captured, under the provider's own label: "router cost" is
+  // Weave Router's authoritative number, "client-reported cost" is the CLI's
+  // local estimate. An unlabelled cost is just "cost" -- never implied to be
+  // provider-billed.
   const costFragment = Number.isFinite(session.cost)
-    ? ` · router cost $${session.cost.toFixed(2)}`
+    ? ` · ${session.costLabel || "cost"} $${session.cost.toFixed(2)}`
     : "";
   const header = `**${session.label}** · session \`${session.sessionId ?? "unknown"}\`${costFragment}`;
   const summary = summarizeTranscript(text);
@@ -286,9 +287,10 @@ function summarizeUser(event, toolNames) {
 }
 
 function summarizeResult(event) {
-  // The CLI's local cost accounting disagrees with the Weave Router's
-  // authoritative cost on the check-run title row, so we deliberately
-  // leave it off this line. Cost lives on the summary footer, not here.
+  // The CLI's local cost accounting can disagree with the provider's cost on
+  // the check-run title row (under Weave Router it always does), so we
+  // deliberately leave it off this line. Cost lives on the session header,
+  // under the provider's own label, not here.
   const details = [];
   if (typeof event.subtype === "string") details.push(event.subtype);
   if (Number.isFinite(event.num_turns)) details.push(`${event.num_turns} turns`);

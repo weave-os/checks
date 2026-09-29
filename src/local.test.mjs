@@ -16,6 +16,7 @@ import {
   MODEL_HAIKU_45,
   MODEL_SONNET_5,
   OUTCOME,
+  RESULT_SCHEMA,
 } from "./parse.mjs";
 import { positiveInteger, readConfig, runChecks } from "./local.mjs";
 
@@ -127,12 +128,32 @@ describe("readConfig", () => {
     assert.equal(readConfig(fixture({ PARALLEL: "0" }).env).parallel, 4);
   });
 
-  it("treats the Weave API key as optional, unlike CI", () => {
-    assert.equal(readConfig(fixture().env).weaveAPIKey, null);
-    assert.equal(
-      readConfig(fixture({ WEAVE_API_KEY: "wk_test" }).env).weaveAPIKey,
-      "wk_test",
+  it("defaults to the inherit provider and needs no Weave key", () => {
+    assert.equal(readConfig(fixture().env).provider.id, "inherit");
+  });
+
+  it("builds the anthropic provider with its env overlay and no Weave key", () => {
+    const { provider } = readConfig(
+      fixture({
+        WEAVE_CHECKS_PROVIDER: "anthropic",
+        WEAVE_CHECKS_PROVIDER_ENV: "ANTHROPIC_BASE_URL=https://gateway.example.com",
+      }).env,
     );
+    assert.equal(provider.id, "anthropic");
+    assert.deepEqual(provider.envFor({}), { ANTHROPIC_BASE_URL: "https://gateway.example.com" });
+  });
+
+  it("fails before any agent runs when weave-router lacks a key", () => {
+    assert.throws(
+      () => readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" }).env),
+      /requires WEAVE_API_KEY/,
+    );
+  });
+
+  it("defaults the schema to the packaged result schema", () => {
+    const { env } = fixture();
+    delete env.SCHEMA_PATH;
+    assert.equal(readConfig(env).schemaText, JSON.stringify(RESULT_SCHEMA));
   });
 
   it("fails loudly on a missing required path", () => {
@@ -162,8 +183,8 @@ describe("runChecks", () => {
     const seen = [];
 
     const summary = await runChecks(config, {
-      evaluate: async ({ check, diff, stat, addedLines, settingSources, settingsPath, extraEnv }) => {
-        seen.push({ slug: check.slug, settingSources, settingsPath, extraEnv });
+      evaluate: async ({ check, diff, stat, addedLines, settingSources, settingsPath, provider }) => {
+        seen.push({ slug: check.slug, settingSources, settingsPath, provider });
         assert.equal(diff, DIFF);
         assert.equal(stat, STAT);
         // The diff is parsed once and shared, so a suggestion's line can be
@@ -196,11 +217,14 @@ describe("runChecks", () => {
       seen.map((entry) => entry.slug),
       ["first-check", "second-check"],
     );
-    // Local runs must load the engineer's own Claude settings (that is what
-    // points the CLI at the router) and inject no router env of their own.
+    // Under the default inherit provider, local runs must load the engineer's
+    // own Claude settings and inject no env of their own.
     assert.deepEqual(seen[0].settingSources, null);
     assert.equal(seen[0].settingsPath, null);
-    assert.deepEqual(seen[0].extraEnv, {});
+    assert.equal(seen[0].provider.id, "inherit");
+    assert.deepEqual(seen[0].provider.envFor({}), {});
+    assert.equal(summary.provider, "inherit");
+    assert.equal(summary.costLabel, "client-reported cost");
 
     const [first, second] = summary.checks;
     assert.equal(first.slug, "first-check");
@@ -261,6 +285,38 @@ describe("runChecks", () => {
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_CUSTOM_HEADERS",
     ]);
+  });
+
+  it("gives a check with no cluster no settings overlay", async () => {
+    const { env, tempDir } = fixture();
+    const matrixPath = path.join(tempDir, "matrix.json");
+    writeFileSync(matrixPath, JSON.stringify({ check: [{ ...CHECKS[0], cluster: null }] }));
+    env.MATRIX_PATH = matrixPath;
+    env.SETTINGS_DIR = path.join(tempDir, "settings");
+    const seen = [];
+
+    await runChecks(readConfig(env), {
+      evaluate: async ({ settingsPath, dropEnv }) => {
+        seen.push({ settingsPath, dropEnv });
+        return passResult("fine");
+      },
+    });
+
+    assert.deepEqual(seen, [{ settingsPath: null, dropEnv: ["WEAVE_API_KEY"] }]);
+  });
+
+  it("isolates an explicit provider from the engineer's settings", async () => {
+    const config = readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "anthropic" }).env);
+    const seen = [];
+
+    await runChecks(config, {
+      evaluate: async ({ settingSources }) => {
+        seen.push(settingSources);
+        return passResult("fine");
+      },
+    });
+
+    assert.deepEqual(seen, ["", ""]);
   });
 
   it("reports a thrown check as its own neutral outcome without abandoning the rest", async () => {

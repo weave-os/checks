@@ -1,7 +1,8 @@
 // Runs every Weave Check against a local working-branch diff, with no GitHub
-// involvement at all. This is the engine behind `wv checks run`
-// (cli/wv/commands/checks.py), which prepares the diff, the check matrix, and
-// the result schema, then invokes this script.
+// involvement at all. This is the engine behind `weave-checks run`
+// (bin/cli.mjs), which prepares the diff and the check matrix, then calls
+// runChecks() -- or any other wrapper that writes the same inputs and invokes
+// this script with them in its environment.
 //
 // Deliberately NOT a second implementation of the review: the agent argv, the
 // prompt scaffolding, and the verdict pipeline all come from runner.mjs, the
@@ -18,9 +19,10 @@
 // suppress as already-reported on the PR. That is the right trade for a
 // pre-push tool -- it errs toward showing the engineer more, not less.
 //
-// Output contract (OUTPUT_PATH), consumed by cli/wv/commands/checks.py:
+// Output contract (OUTPUT_PATH, and the CLI's `--format json`):
 //
-//   { "checks": [ { slug, name, model, cluster, outcome, reason, error,
+//   { "provider": "<id>", "costLabel": "<how cost was measured>",
+//     "checks": [ { slug, name, model, cluster, outcome, reason, error,
 //                   suggestions: [...], proseFallbacks: [...], rejected: [...],
 //                   cost, durationMs } ],
 //     "totals": { pass, fail, neutral, cost, durationMs } }
@@ -30,7 +32,8 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { OUTCOME, parseAddedLines } from "./parse.mjs";
+import { OUTCOME, RESULT_SCHEMA, parseAddedLines } from "./parse.mjs";
+import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 import {
   evaluateCheck,
   formatDuration,
@@ -42,6 +45,10 @@ import {
 } from "./runner.mjs";
 
 const DEFAULT_PARALLEL = 4;
+
+// A developer's machine is already configured the way they want their agent
+// to run, so a local run uses it unless told otherwise.
+export const DEFAULT_LOCAL_PROVIDER = PROVIDER.INHERIT;
 
 // Reads and validates the run's configuration from `env`. Taking the
 // environment as an argument (rather than reading process.env inline) is what
@@ -59,20 +66,25 @@ export function readConfig(env) {
     checks: JSON.parse(readFileSync(required("MATRIX_PATH"), "utf8")).check,
     diff: readFileSync(required("DIFF_PATH"), "utf8"),
     stat: readFileSync(required("STAT_PATH"), "utf8"),
-    schemaText: readFileSync(required("SCHEMA_PATH"), "utf8"),
+    // Optional: the schema is a constant of this package, so a wrapper only
+    // passes one to pin a different version of it.
+    schemaText: env.SCHEMA_PATH
+      ? readFileSync(env.SCHEMA_PATH, "utf8")
+      : JSON.stringify(RESULT_SCHEMA),
     parallel: positiveInteger(env.PARALLEL, DEFAULT_PARALLEL),
-    // Optional locally, unlike CI: without it the router cost lookup is
-    // skipped and every check reports an unknown cost rather than failing the
-    // run. Most engineers do not have a Weave API key to hand, and a missing
-    // cost column is not a reason to refuse to review a diff.
-    weaveAPIKey: env.WEAVE_API_KEY || null,
-    // Optional: a directory of `settings-<cluster>.json` files the CLI
-    // generated (see wv/commands/checks.py's _write_cluster_settings), one
-    // per cluster a selected check declares. Each mirrors `wv mr claude`'s
-    // generated settings file -- the engineer's own settings, with
-    // X-Weave-Force-Cluster added -- so a check is served from the SAME
-    // cluster it would be in CI, not whatever the engineer's own routing
-    // happens to prefer. Absent when --no-force-cluster was passed.
+    // Only the selected provider's credentials are read: `inherit` and
+    // `anthropic` need no Weave key, and `weave-router` fails here, before
+    // any agent runs, if either of its two is missing.
+    provider: createProvider(env.WEAVE_CHECKS_PROVIDER || DEFAULT_LOCAL_PROVIDER, {
+      env,
+      providerEnv: parseProviderEnv(env.WEAVE_CHECKS_PROVIDER_ENV),
+    }),
+    productName: env.WEAVE_CHECKS_PRODUCT_NAME || undefined,
+    // Optional: a directory of `settings-<cluster>.json` files a wrapper
+    // generated, one per cluster a selected check declares -- typically the
+    // engineer's own settings with that cluster's routing header added, so a
+    // check is served from the SAME cluster it would be in CI. A check with no
+    // cluster gets no overlay.
     settingsDir: env.SETTINGS_DIR || null,
   };
 }
@@ -90,14 +102,14 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
   const addedLines = parseAddedLines(config.diff);
   const checkResults = await runPool(config.checks, config.parallel, async (check) => {
     process.stderr.write(`Weave Checks: running ${check.slug}...\n`);
-    const settingsPath = config.settingsDir === null
+    const settingsPath = config.settingsDir === null || check.cluster === null
       ? null
       : path.join(config.settingsDir, `settings-${check.cluster}.json`);
     const dropEnv = ["WEAVE_API_KEY"];
     if (settingsPath !== null) {
-      // Match `wv mr claude`: once the generated --settings overlay exists,
-      // inherited routing variables must not compete with it. Without an
-      // overlay (--no-force-cluster), preserve shell-provided routing env.
+      // Once the generated --settings overlay exists, inherited routing
+      // variables must not compete with it. Without an overlay, preserve
+      // shell-provided routing env.
       dropEnv.push(
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_API_KEY",
@@ -116,26 +128,26 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
         schemaText: config.schemaText,
         // No history: a local run has no review threads to compare against.
         //
-        // `settingSources: null` lets the engineer's own Claude Code settings
-        // load (CI passes "" to keep a runner's config out of a check) --
-        // that's what supplies the router base URL and key. `settingsPath`,
-        // when set, layers a forced cluster on TOP of those settings via
-        // `--settings` (highest precedence), the same mechanism `wv mr
-        // claude` uses to redirect the router without touching the user's
-        // own settings file. Drop the inherited routing vars just as `wv mr
-        // claude` does, so the settings overlay is the only source of truth.
-        extraEnv: {},
-        settingSources: null,
+        // Under `inherit`, `settingSources: null` lets the engineer's own
+        // Claude Code settings load -- that's what supplies their endpoint and
+        // login. An explicit provider gets CI's isolation instead
+        // (`--setting-sources ""`), so a settings-file `env` block can't
+        // quietly override the provider the engineer asked for.
+        // `settingsPath`, when set, layers a cluster overlay on TOP via
+        // `--settings` (highest precedence); drop the inherited routing vars
+        // so that overlay is the only source of truth.
+        provider: config.provider,
+        productName: config.productName,
+        settingSources: config.provider.id === PROVIDER.INHERIT ? null : "",
         settingsPath,
         dropEnv,
-        weaveAPIKey: config.weaveAPIKey,
         onCostError: ({ slug, suffix, error }) =>
           process.stderr.write(`[${slug}/${suffix}] cost unavailable: ${error}\n`),
       });
     } catch (error) {
       // A throw here is an infrastructure failure (unreadable check file,
       // spawn failure), not a verdict. Report it as this check's neutral
-      // outcome so one broken check doesn't abandon the other sixteen.
+      // outcome so one broken check doesn't abandon the rest.
       checkResult = {
         outcome: OUTCOME.NEUTRAL,
         error: error.message ?? String(error),
@@ -153,7 +165,12 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
     return summarizeCheck(check, checkResult);
   });
 
-  return { checks: checkResults, totals: checkTotalsFor(checkResults) };
+  return {
+    provider: config.provider.id,
+    costLabel: config.provider.costLabel,
+    checks: checkResults,
+    totals: checkTotalsFor(checkResults),
+  };
 }
 
 // Flattens one check's normalized result into the JSON the CLI renders. Only

@@ -1,14 +1,15 @@
-// Helpers for the Weave Checks workflow (.github/workflows/weave-checks.yml).
+// Check-file parsing, diff parsing, and the fixed vocabularies Weave Checks
+// shares between the GitHub action, the worker, and the local CLI.
 //
-// Kept as a plain ESM module with no dependencies so the workflow can run it
+// Kept as a plain ESM module with no dependencies so the action can run it
 // with bare `node` before any install step, and so the parsing rules are unit
 // testable (parse.test.mjs) rather than embedded in shell.
 
-// Models a check may declare in its frontmatter. An unlisted value fails
-// discovery rather than silently falling back, so a typo can never quietly
-// re-route a check onto a different-cost model. Named constants are exported
-// alongside the set so callers (worker.mjs's dedup judge is one) can pin to
-// a specific model without restating the string literal.
+// Weave Router's approved model list. Under WEAVE_POLICY an unlisted value
+// fails discovery rather than silently falling back, so a typo can never
+// quietly re-route a check onto a different-cost model. Named constants are
+// exported alongside the set so callers (worker.mjs's dedup judge is one) can
+// pin to a specific model without restating the string literal.
 export const MODEL_HAIKU_45 = "claude-haiku-4-5";
 export const MODEL_SONNET_4_6 = "claude-sonnet-4-6";
 export const MODEL_SONNET_5 = "claude-sonnet-5";
@@ -22,15 +23,14 @@ export const SUPPORTED_MODELS = new Set([
   MODEL_OPUS_5,
 ]);
 
-// Routing clusters a check may declare in its frontmatter (router#917's
-// `x-weave-force-cluster` header). These are the classifier groups on the
-// live prod HMM roster (`ml_dev/hmm_router/rosters/roster_v2.json`, pinned by
-// `router-hmm-sidecar/artifact-pins/prod-01.json`'s roster_sha256) -- not an
-// arbitrary label set. `model` still anchors cost -- the router prices and
-// bills against it -- but `cluster` is what actually constrains which model
-// serves the turn; the router 400s if the two ever name incompatible tiers.
-// `explore` is reserved for the router's own repository-exploration turn
-// type and never a check's own declared cluster.
+// Routing clusters a check may declare in its frontmatter, sent to Weave
+// Router as the `X-Weave-Force-Cluster` header. These are the classifier
+// groups on the Router's production roster -- not an arbitrary label set.
+// `model` still anchors cost -- the router prices and bills against it -- but
+// `cluster` is what actually constrains which model serves the turn; the
+// router 400s if the two ever name incompatible tiers. `explore` is reserved
+// for the router's own repository-exploration turn type and never a check's
+// own declared cluster.
 export const CLUSTER_LOW = "low";
 export const CLUSTER_MEDIUM = "medium";
 export const CLUSTER_HIGH = "high";
@@ -42,15 +42,60 @@ export const SUPPORTED_CLUSTERS = new Set([
   CLUSTER_MAXIMUM,
 ]);
 
-// Files under .weave-checks/ that are documentation, not checks.
+// Validation policy for a check's `model` and `cluster` frontmatter.
+//
+//   allowedModels  -- Set of exact model strings, or null to accept any
+//                     single-token model name (MODEL_NAME below).
+//   allowedClusters -- Set of exact cluster names, or null to accept any
+//                     CLUSTER_NAME-shaped value.
+//   requireModel   -- a check with no `model` fails discovery. Otherwise it
+//                     falls back to `defaultModel`, and with no default the
+//                     CLI's own default model serves it.
+//   requireCluster -- a check with no `cluster` fails discovery.
+//   defaultModel   -- model applied to a check that declares none.
+//
+// WEAVE_POLICY is today's strict Weave Router contract and the default for
+// buildMatrix()/parseCheckFile() so existing callers keep their behaviour.
+// GENERIC_POLICY is the starting point for any other provider.
+export const WEAVE_POLICY = Object.freeze({
+  allowedModels: SUPPORTED_MODELS,
+  allowedClusters: SUPPORTED_CLUSTERS,
+  requireModel: true,
+  requireCluster: true,
+  defaultModel: null,
+});
+
+export const GENERIC_POLICY = Object.freeze({
+  allowedModels: null,
+  allowedClusters: null,
+  requireModel: false,
+  requireCluster: false,
+  defaultModel: null,
+});
+
+// Model names travel to the CLI as one `--model` argument and, under Weave
+// Router, into cost accounting. One line, no spaces, and a leading
+// alphanumeric keep a stray value from being read as a flag or splitting.
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+
+// Clusters ride in an HTTP header value; restrict them to the same slug
+// vocabulary as check names so a header can never be split or smuggled.
+const CLUSTER_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+// A check's slug (its filename without `.md`) is written into every comment
+// marker and matched back by history.mjs's marker regex. A slug outside this
+// vocabulary would post comments the next run can never recognize.
+export const SLUG_PATTERN = /^[a-z0-9-]+$/;
+
+// Files in a checks directory that are documentation, not checks.
 const NON_CHECK_FILES = new Set(["README.md"]);
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 
-// Frontmatter is a fixed four-key contract (name, description, model,
-// cluster), so a line-oriented reader is enough -- no YAML dependency, and
-// anything that doesn't fit the contract is rejected instead of
-// half-understood.
+// Frontmatter is a fixed four-key contract (name, description, and the
+// optional model and cluster), so a line-oriented reader is enough -- no YAML
+// dependency, and anything that doesn't fit the contract is rejected instead
+// of half-understood.
 // Keys the contract permits in a check's frontmatter. Anything else is
 // rejected (after required-key checks below) so a misspelled or made-up
 // metadata field fails discovery rather than silently corrupting the matrix.
@@ -170,7 +215,11 @@ export function ignorePathspecs(patterns) {
 
 // Parses one check file into a matrix entry. Throws with the offending path so
 // a bad check fails discovery loudly instead of being skipped.
-export function parseCheckFile(text, filePath) {
+//
+// `model` and `cluster` are always present on the result, as null when the
+// check declares neither and the policy supplies no default, so every
+// consumer can test for absence the same way.
+export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
   let parsed;
   try {
     parsed = parseFrontmatter(text);
@@ -178,34 +227,36 @@ export function parseCheckFile(text, filePath) {
     throw new Error(`${filePath}: ${err.message}`);
   }
 
+  const slug = slugFromPath(filePath);
+  if (!SLUG_PATTERN.test(slug)) {
+    throw new Error(
+      `${filePath}: check file name "${slug}" must use only lowercase letters, digits, and hyphens`,
+    );
+  }
+
   const { fields, body } = parsed;
-  for (const key of ["name", "description", "model", "cluster"]) {
+  const requiredKeys = [
+    "name",
+    "description",
+    ...(policy.requireModel ? ["model"] : []),
+    ...(policy.requireCluster ? ["cluster"] : []),
+  ];
+  for (const key of requiredKeys) {
     const value = fields.get(key);
     if (value === undefined || value === "") {
       throw new Error(`${filePath}: frontmatter is missing required key "${key}"`);
     }
   }
 
-  const model = fields.get("model");
-  if (!SUPPORTED_MODELS.has(model)) {
-    throw new Error(
-      `${filePath}: unsupported model "${model}" (allowed: ${[...SUPPORTED_MODELS].sort().join(", ")})`,
-    );
-  }
-
-  const cluster = fields.get("cluster");
-  if (!SUPPORTED_CLUSTERS.has(cluster)) {
-    throw new Error(
-      `${filePath}: unsupported cluster "${cluster}" (allowed: ${[...SUPPORTED_CLUSTERS].sort().join(", ")})`,
-    );
-  }
+  const model = validateModel(fields.get("model") || policy.defaultModel || null, filePath, policy);
+  const cluster = validateCluster(fields.get("cluster") || null, filePath, policy);
 
   if (body.trim() === "") {
     throw new Error(`${filePath}: check body is empty`);
   }
 
   return {
-    slug: slugFromPath(filePath),
+    slug,
     name: fields.get("name"),
     description: fields.get("description"),
     model,
@@ -215,13 +266,57 @@ export function parseCheckFile(text, filePath) {
   };
 }
 
+function validateModel(model, filePath, policy) {
+  if (model === null) return null;
+  // Continue's check format names models as `anthropic/<model>`. The Claude
+  // CLI takes the bare model name, so a ported check would otherwise fail at
+  // the first agent call instead of here.
+  if (model.startsWith("anthropic/")) {
+    throw new Error(
+      `${filePath}: model "${model}" uses a provider prefix; write the bare Claude model name (e.g. "${model.slice("anthropic/".length)}")`,
+    );
+  }
+  if (policy.allowedModels !== null) {
+    if (!policy.allowedModels.has(model)) {
+      throw new Error(
+        `${filePath}: unsupported model "${model}" (allowed: ${[...policy.allowedModels].sort().join(", ")})`,
+      );
+    }
+    return model;
+  }
+  if (!MODEL_NAME.test(model)) {
+    throw new Error(`${filePath}: malformed model name "${model}"`);
+  }
+  return model;
+}
+
+function validateCluster(cluster, filePath, policy) {
+  if (cluster === null) return null;
+  if (policy.allowedClusters !== null) {
+    if (!policy.allowedClusters.has(cluster)) {
+      throw new Error(
+        `${filePath}: unsupported cluster "${cluster}" (allowed: ${[...policy.allowedClusters].sort().join(", ")})`,
+      );
+    }
+    return cluster;
+  }
+  if (!CLUSTER_NAME.test(cluster)) {
+    throw new Error(`${filePath}: malformed cluster name "${cluster}"`);
+  }
+  return cluster;
+}
+
 // Builds the job matrix. Display names must be unique: the check-run name is
 // derived from them, and two runs sharing a name would overwrite each other's
 // status on the PR.
-export function buildMatrix(files) {
+//
+// `validateCheck`, when given, is a provider's own requirement on a parsed
+// check (Weave Router rejects a check with no cluster); it returns an error
+// string or null.
+export function buildMatrix(files, policy = WEAVE_POLICY, validateCheck = null) {
   const checks = files
     .filter((file) => isCheckFile(file.path))
-    .map((file) => parseCheckFile(file.text, file.path))
+    .map((file) => parseCheckFile(file.text, file.path, policy))
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
   const seen = new Map();
@@ -233,11 +328,39 @@ export function buildMatrix(files) {
       );
     }
     seen.set(check.name, check.path);
+    const providerError = validateCheck?.(check) ?? null;
+    if (providerError !== null) {
+      throw new Error(`${check.path}: ${providerError}`);
+    }
   }
 
-  // `body` is read from disk by the runner step, not carried through the
-  // matrix -- GitHub caps matrix payload size and check bodies are large.
+  // `body` is read from disk by the runner, not carried through the matrix --
+  // GitHub caps matrix payload size and check bodies are large.
   return checks.map(({ body: _body, ...entry }) => entry);
+}
+
+// Builds a policy from caller-supplied lists (the action's inputs and the
+// CLI's flags). An empty or absent list means "no allowlist": shape
+// validation only.
+export function policyFrom({
+  allowedModels = [],
+  allowedClusters = [],
+  requireModel = false,
+  requireCluster = false,
+  defaultModel = null,
+} = {}) {
+  const asSet = (values) => (values.length === 0 ? null : new Set(values));
+  const policy = {
+    allowedModels: asSet(allowedModels),
+    allowedClusters: asSet(allowedClusters),
+    requireModel,
+    requireCluster,
+    defaultModel: defaultModel || null,
+  };
+  if (policy.defaultModel !== null) {
+    validateModel(policy.defaultModel, "default model", policy);
+  }
+  return Object.freeze(policy);
 }
 
 // JSON Schema handed to `claude -p --json-schema`. additionalProperties:false
@@ -461,11 +584,10 @@ export const STATUS = Object.freeze({
 // The workflow's fallback step only tests the file for existence, never its
 // contents, so these strings are diagnostics for whoever opens the artifact --
 // but they are a closed set all the same, and naming them keeps a typo from
-// inventing a fifth outcome nobody can grep for.
+// inventing a fourth outcome nobody can grep for.
 export const RUN_MARKER = Object.freeze({
   COMPLETED: "completed",
   CRASHED: "crashed",
-  SKIPPED_STALE_RERUN: "skipped-stale-rerun",
   NO_REVIEWABLE_CHANGES: "no-reviewable-changes",
 });
 
@@ -698,25 +820,4 @@ export function interpretResult(cli) {
       rawResult: cli.result,
     },
   };
-}
-
-// Maps a GitHub check-run `conclusion` back to this script's internal
-// pass/fail/neutral vocabulary. Used when a targeted rerun seeds `states`
-// from an already-completed prior check run instead of running it fresh.
-//
-// Pre-fix, `failure` returned OUTCOME.FAIL so a re-seed could prop open a
-// synthetic FAIL row. The contract is now PASS-or-neutral (FAIL verdicts
-// publish as GitHub `neutral`, see worker.mjs `completeCheckRun`); a `failure`
-// conclusion can only be one set via the API by some other process (a
-// human, an old run), and the safe default is null -- NOT OUTCOME.FAIL, which
-// would seed a synthetic FAIL row and shift the new run's verdict
-// accounting. The worker falls back to OUTCOME.NEUTRAL on null. Any other
-// unrecognized conclusion (e.g. "cancelled", "timed_out", "action_required"
-// -- statuses a human or GitHub could set directly via the API but
-// worker.mjs never does) also maps to null, so the caller falls back to a
-// safe default instead of inventing an outcome.
-export function outcomeFromConclusion(conclusion) {
-  if (conclusion === GITHUB_CONCLUSION.SUCCESS) return OUTCOME.PASS;
-  if (conclusion === GITHUB_CONCLUSION.NEUTRAL) return OUTCOME.NEUTRAL;
-  return null;
 }

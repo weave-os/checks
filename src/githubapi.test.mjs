@@ -204,8 +204,8 @@ describe("truncateBody", () => {
 });
 
 describe("requestWithRetry", () => {
-  // The exact failure from run 32055245700: a 503 on a check-run PATCH that
-  // used to be fatal for all 17 checks.
+  // The exact failure this module exists for: a 503 on a check-run PATCH
+  // that used to be fatal for every check in the run.
   it("retries a 503 and returns the eventual success", async () => {
     const fetchFn = fakeFetch([
       response(503, '{"message": "No server is currently available"}'),

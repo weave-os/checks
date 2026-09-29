@@ -7,6 +7,14 @@ import { fileURLToPath } from "node:url";
 import {
   RESULT_SCHEMA,
   DEDUP_SCHEMA,
+  GENERIC_POLICY,
+  MODEL_HAIKU_45,
+  MODEL_OPUS_4_8,
+  MODEL_OPUS_5,
+  MODEL_SONNET_4_6,
+  MODEL_SONNET_5,
+  WEAVE_POLICY,
+  policyFrom,
   RESOLUTION_SCHEMA,
   SUPPORTED_CLUSTERS,
   SUPPORTED_MODELS,
@@ -15,13 +23,11 @@ import {
   everyCheckReviewed,
   formatReviewedMarker,
   formatReviewComment,
-  GITHUB_CONCLUSION,
   interpretResult,
   INTERPRET_OUTCOME,
   ignorePathspecs,
   isCheckFile,
   parseIgnoreList,
-  outcomeFromConclusion,
   OUTCOME,
   parseAddedLines,
   parseCheckFile,
@@ -110,11 +116,113 @@ describe("parseCheckFile", () => {
   });
 });
 
+describe("parseCheckFile policies", () => {
+  const WITHOUT_ROUTING = `---\nname: Bare\ndescription: No routing keys\n---\n\nBody.\n`;
+
+  it("keeps the Weave Router model list pinned", () => {
+    // The self-check workflow and any Weave adopter depend on this exact set;
+    // widening it is a deliberate change, not a side effect of a refactor.
+    assert.deepEqual(
+      [...SUPPORTED_MODELS].sort(),
+      [MODEL_HAIKU_45, MODEL_OPUS_4_8, MODEL_OPUS_5, MODEL_SONNET_4_6, MODEL_SONNET_5].sort(),
+    );
+    assert.equal(WEAVE_POLICY.allowedModels, SUPPORTED_MODELS);
+    assert.equal(WEAVE_POLICY.requireCluster, true);
+  });
+
+  it("defaults to the Weave policy", () => {
+    assert.throws(() => parseCheckFile(WITHOUT_ROUTING, "checks/bare.md"), /missing required key "model"/);
+  });
+
+  it("serializes absent model and cluster as null under the generic policy", () => {
+    const check = parseCheckFile(WITHOUT_ROUTING, "checks/bare.md", GENERIC_POLICY);
+    assert.equal(check.model, null);
+    assert.equal(check.cluster, null);
+    const [entry] = buildMatrix([file(WITHOUT_ROUTING, "checks/bare.md")], GENERIC_POLICY);
+    assert.ok(Object.hasOwn(entry, "cluster"));
+    assert.equal(entry.cluster, null);
+  });
+
+  it("applies the policy's default model to a check that declares none", () => {
+    const policy = policyFrom({ defaultModel: "claude-sonnet-4-5" });
+    assert.equal(parseCheckFile(WITHOUT_ROUTING, "checks/bare.md", policy).model, "claude-sonnet-4-5");
+  });
+
+  it("accepts any well-formed model without an allowlist", () => {
+    for (const model of ["claude-sonnet-4-5", "us.anthropic.claude-opus-4-1-v1:0", "sonnet"]) {
+      const text = VALID.replace("claude-haiku-4-5", model);
+      assert.equal(parseCheckFile(text, "checks/x.md", GENERIC_POLICY).model, model);
+    }
+  });
+
+  it("rejects a malformed model without an allowlist", () => {
+    for (const model of ["-flag", "two words", "bad\u0000byte"]) {
+      const text = VALID.replace("claude-haiku-4-5", model);
+      assert.throws(() => parseCheckFile(text, "checks/x.md", GENERIC_POLICY), /malformed model name/);
+    }
+  });
+
+  it("names the fix for a Continue-style provider-prefixed model", () => {
+    const text = VALID.replace("claude-haiku-4-5", "anthropic/claude-haiku-4-5");
+    for (const policy of [WEAVE_POLICY, GENERIC_POLICY]) {
+      assert.throws(
+        () => parseCheckFile(text, "checks/x.md", policy),
+        /uses a provider prefix; write the bare Claude model name \(e\.g\. "claude-haiku-4-5"\)/,
+      );
+    }
+  });
+
+  it("enforces caller-supplied allowlists", () => {
+    const policy = policyFrom({ allowedModels: ["claude-sonnet-4-5"], allowedClusters: ["fast"] });
+    assert.throws(() => parseCheckFile(VALID, "checks/x.md", policy), /unsupported model "claude-haiku-4-5" \(allowed: claude-sonnet-4-5\)/);
+    const ok = VALID.replace("claude-haiku-4-5", "claude-sonnet-4-5").replace("cluster: low", "cluster: fast");
+    assert.equal(parseCheckFile(ok, "checks/x.md", policy).cluster, "fast");
+  });
+
+  it("requires a cluster when the policy says so", () => {
+    const text = VALID.split("\n").filter((line) => !line.startsWith("cluster:")).join("\n");
+    assert.throws(() => parseCheckFile(text, "checks/x.md", policyFrom({ requireCluster: true })), /missing required key "cluster"/);
+  });
+
+  it("rejects a malformed cluster without an allowlist", () => {
+    const text = VALID.replace("cluster: low", "cluster: Low Tier");
+    assert.throws(() => parseCheckFile(text, "checks/x.md", GENERIC_POLICY), /malformed cluster name/);
+  });
+
+  it("rejects a default model outside the allowlist", () => {
+    assert.throws(
+      () => policyFrom({ allowedModels: ["claude-sonnet-4-5"], defaultModel: "claude-haiku-4-5" }),
+      /unsupported model/,
+    );
+  });
+
+  it("rejects a check file name outside the marker vocabulary", () => {
+    for (const name of ["Bad_Name", "has space", "UPPER"]) {
+      assert.throws(
+        () => parseCheckFile(VALID, `checks/${name}.md`, GENERIC_POLICY),
+        /must use only lowercase letters, digits, and hyphens/,
+      );
+    }
+  });
+});
+
+describe("buildMatrix provider validation", () => {
+  it("fails discovery with the provider's error and the offending path", () => {
+    const noCluster = VALID.split("\n").filter((line) => !line.startsWith("cluster:")).join("\n");
+    const validateCheck = (check) => (check.cluster === null ? "requires a cluster" : null);
+    assert.throws(
+      () => buildMatrix([file(noCluster, "checks/a.md")], GENERIC_POLICY, validateCheck),
+      /checks\/a\.md: requires a cluster/,
+    );
+    assert.equal(buildMatrix([file(VALID, "checks/a.md")], GENERIC_POLICY, validateCheck).length, 1);
+  });
+});
+
 describe("parseIgnoreList", () => {
   it("skips comments, blanks, and trailing slashes", () => {
     assert.deepEqual(
-      parseIgnoreList("# research\n\nml_dev/\n  vendor  \n"),
-      ["ml_dev", "vendor"],
+      parseIgnoreList("# research\n\nresearch/\n  vendor  \n"),
+      ["research", "vendor"],
     );
   });
 
@@ -125,8 +233,8 @@ describe("parseIgnoreList", () => {
 
   it("accepts wildcards below a literal directory prefix", () => {
     assert.deepEqual(
-      parseIgnoreList("backend/internal/app/query/*.sql.go\nvendor/?/generated[0-9].go\n"),
-      ["backend/internal/app/query/*.sql.go", "vendor/?/generated[0-9].go"],
+      parseIgnoreList("server/internal/db/*.sql.go\nvendor/?/generated[0-9].go\n"),
+      ["server/internal/db/*.sql.go", "vendor/?/generated[0-9].go"],
     );
   });
 
@@ -142,7 +250,7 @@ describe("parseIgnoreList", () => {
 
   it("rejects backslashes", () => {
     assert.throws(
-      () => parseIgnoreList("backend\\generated\\*.go\n"),
+      () => parseIgnoreList("server\\generated\\*.go\n"),
       /must use forward slashes without escapes/,
     );
   });
@@ -159,8 +267,8 @@ describe("parseIgnoreList", () => {
 
 describe("ignorePathspecs", () => {
   it("prefixes each pattern as a git exclude", () => {
-    assert.deepEqual(ignorePathspecs(["ml_dev", "vendor"]), [
-      ":(exclude)ml_dev",
+    assert.deepEqual(ignorePathspecs(["research", "vendor"]), [
+      ":(exclude)research",
       ":(exclude)vendor",
     ]);
   });
@@ -443,32 +551,6 @@ describe("formatReviewComment", () => {
       comment: "c",
     });
     assert.equal(comment.start_line, 8);
-  });
-});
-
-describe("outcomeFromConclusion", () => {
-  it("maps success to pass", () => {
-    assert.equal(outcomeFromConclusion(GITHUB_CONCLUSION.SUCCESS), OUTCOME.PASS);
-  });
-
-  // Worker.mjs now publishes every non-PASS outcome as `neutral`, so
-  // `failure` on a real check-run conclusion only arrives from a stale
-  // pre-fix run -- treat it as "unknown" rather than silently relabeling
-  // it as `fail`, which would seed a synthetic FAIL row and shift the
-  // run's verdict accounting. The worker falls back to NEUTRAL on null.
-  it("maps failure to null rather than fail", () => {
-    assert.equal(outcomeFromConclusion("failure"), null);
-  });
-
-  it("maps neutral to neutral", () => {
-    assert.equal(outcomeFromConclusion(GITHUB_CONCLUSION.NEUTRAL), OUTCOME.NEUTRAL);
-  });
-
-  it("maps an unrecognized conclusion to null", () => {
-    assert.equal(outcomeFromConclusion("cancelled"), null);
-    assert.equal(outcomeFromConclusion("timed_out"), null);
-    assert.equal(outcomeFromConclusion(undefined), null);
-    assert.equal(outcomeFromConclusion(null), null);
   });
 });
 

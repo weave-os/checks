@@ -367,20 +367,30 @@ describe("formatTranscriptSection", () => {
     assert.ok(block.endsWith("</details>"));
   });
 
-  it("renders the router-reported cost next to the session id when available", () => {
-    // The router-reported cost is the authoritative number on the
-    // check-run title row; surfacing it on the session header lets a
-    // reader working from the artifact match it to the per-attempt
-    // cost when something looks off.
+  it("renders the provider-reported cost next to the session id when available", () => {
+    // The provider-reported cost is the number on the check-run title row;
+    // surfacing it on the session header lets a reader working from the
+    // artifact match it to the per-attempt cost when something looks off.
     const block = formatTranscriptSection("Reviewer", [
       {
         label: "Main review",
         sessionId: SESSION_ID,
         cost: 0.27,
+        costLabel: "router cost",
         text: event("result", { subtype: "success" }),
       },
     ]);
     assert.match(block, /\*\*Main review\*\* · session `[^`]+` · router cost \$0\.27/);
+  });
+
+  it("labels a client-reported cost as such, and an unlabelled one as plain cost", () => {
+    const render = (costLabel) =>
+      formatTranscriptSection("Reviewer", [
+        { label: "Main review", sessionId: SESSION_ID, cost: 0.1, costLabel, text: event("result", { subtype: "success" }) },
+      ]);
+    assert.match(render("client-reported cost"), /· client-reported cost \$0\.10/);
+    assert.match(render(undefined), /· cost \$0\.10/);
+    assert.doesNotMatch(render(undefined), /router cost/);
   });
 
   it("omits the router-cost fragment when the session has no captured cost", () => {
