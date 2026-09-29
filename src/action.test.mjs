@@ -191,7 +191,7 @@ describe("action.yml", () => {
 
   it("has no input for substituting a different GitHub App/token exchange", () => {
     assert.equal(INPUTS.includes("token-exchange-url"), false);
-    assert.equal(DEFAULT_TOKEN_EXCHANGE_URL, "https://app.weaveos.com/api/v1/checks/github-token");
+    assert.equal(DEFAULT_TOKEN_EXCHANGE_URL, "https://staging-01.weaveos.com/api/v1/checks/github-token");
     assert.doesNotMatch(step("Authenticate as the Weave Checks App").block, /TOKEN_EXCHANGE_URL:/);
   });
 
