@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Self-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: checks-self-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  self-check:
+    name: Weave Checks dogfood
+    # pull_request from a fork has a read-only GITHUB_TOKEN and no repository
+    # secrets. Never use pull_request_target to get write access to fork code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # This checkout makes the local composite action available as ./.
+      # The action itself creates its aggregate before any optional consumer
+      # checkout/preparation; credentials are not persisted in .git/config.
+      - name: Check out PR merge commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      # Secrets are optional until the repo owner has configured both in the
+      # GitHub repository settings. Skip cleanly, with an explicit warning,
+      # until then rather than failing every PR with missing credentials.
+      - name: Check Router credentials are configured
+        id: credentials
+        shell: bash
+        env:
+          WEAVE_ROUTER_KEY: ${{ secrets.WEAVE_ROUTER_KEY }}
+          WEAVE_API_KEY: ${{ secrets.WEAVE_API_KEY }}
+        run: |
+          if [ -n "${WEAVE_ROUTER_KEY}" ] && [ -n "${WEAVE_API_KEY}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Self-check skipped: configure repository secrets WEAVE_ROUTER_KEY and WEAVE_API_KEY to enable Router-backed dogfooding."
+            printf "%s\n" "Weave Checks self-check skipped: configure both WEAVE_ROUTER_KEY and WEAVE_API_KEY repository secrets." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Weave Checks
+        if: steps.credentials.outputs.ready == 'true'
+        uses: ./
+        with:
+          github-token: ${{ github.token }}
+          provider: weave-router
+          weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
+          weave-api-key: ${{ secrets.WEAVE_API_KEY }}
+          checks-dir: starter-checks
+          allowed-intelligence: low,medium,high,maximum
+          checkout: false
+          concurrency: "4"
+          upload-diagnostics: "false"

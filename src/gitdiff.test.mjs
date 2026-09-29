@@ -48,10 +48,16 @@ function repo() {
   return { root, dir, git, write, commit, out };
 }
 
-// Every scratch index this module creates lives under os.tmpdir() with this
-// prefix; none may survive a call.
-function scratchIndexes() {
-  return readdirSync(os.tmpdir()).filter((name) => name.startsWith("weave-checks-index-"));
+// Observe the actual temporary index path used by a call, instead of taking
+// a process-global snapshot of os.tmpdir(): node:test runs this file's cases
+// concurrently, so another case may legitimately create its own index while
+// this assertion is in flight.
+function tracingGit(seen) {
+  return (args, options = {}) => {
+    const scratch = options.env?.GIT_INDEX_FILE;
+    if (scratch) seen.add(scratch);
+    return realGit(args, options);
+  };
 }
 
 describe("writeWorkingTreeDiff", () => {
@@ -74,9 +80,9 @@ describe("writeWorkingTreeDiff", () => {
     r.write("untracked.txt", "untracked\n");
     r.write("ignored/junk.txt", "ignored\n");
     const indexBefore = readFileSync(path.join(r.dir, ".git", "index"));
-    const scratchBefore = scratchIndexes();
+    const scratch = new Set();
 
-    const { diff, stat } = writeWorkingTreeDiff({ repoDir: r.dir, base, outDir: r.out });
+    const { diff, stat } = writeWorkingTreeDiff({ repoDir: r.dir, base, outDir: r.out, git: tracingGit(scratch) });
 
     for (const text of [diff, stat]) {
       assert.match(text, /staged\.txt/);
@@ -91,7 +97,11 @@ describe("writeWorkingTreeDiff", () => {
     // The real index is byte-identical and the user's staged state stands.
     assert.ok(readFileSync(path.join(r.dir, ".git", "index")).equals(indexBefore));
     assert.equal(r.git("status", "--short", "--", "staged.txt"), "A  staged.txt\n");
-    assert.deepEqual(scratchIndexes(), scratchBefore);
+    assert.equal(scratch.size, 1);
+    for (const index of scratch) {
+      assert.ok(!index.startsWith(`${r.dir}${path.sep}`), "scratch index must be outside the repo");
+      assert.equal(existsSync(path.dirname(index)), false, "scratch index directory should be removed");
+    }
   });
 
   it("removes the scratch index even when git fails", () => {
@@ -99,10 +109,14 @@ describe("writeWorkingTreeDiff", () => {
     r.write("a.txt", "a\n");
     r.git("add", ".");
     r.commit();
-    const scratchBefore = scratchIndexes();
+    const scratch = new Set();
 
-    assert.throws(() => writeWorkingTreeDiff({ repoDir: r.dir, base: "no-such-ref", outDir: r.out }), /git diff/);
-    assert.deepEqual(scratchIndexes(), scratchBefore);
+    assert.throws(
+      () => writeWorkingTreeDiff({ repoDir: r.dir, base: "no-such-ref", outDir: r.out, git: tracingGit(scratch) }),
+      /git diff/,
+    );
+    assert.equal(scratch.size, 1);
+    for (const index of scratch) assert.equal(existsSync(path.dirname(index)), false);
   });
 
   it("applies the ignore list to the diff, including already-committed paths", () => {

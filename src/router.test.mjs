@@ -313,8 +313,8 @@ describe("routerSessionCost", () => {
 describe("weaveRouterProvider", () => {
   const provider = () => weaveRouterProvider({ routerKey: ROUTER_KEY, weaveAPIKey: WEAVE_API_KEY });
 
-  it("sends each check's cluster as the force-cluster header", () => {
-    const env = provider().envFor({ model: "claude-haiku-4-5", cluster: "high" });
+  it("sends the intelligence-derived cluster as the force-cluster header", () => {
+    const env = provider().envFor({ model: "opus", intelligence: "high", cluster: "high" });
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Force-Cluster: high/);
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Router-Key: rk_test/);
   });
@@ -328,9 +328,9 @@ describe("weaveRouterProvider", () => {
     }
   });
 
-  it("rejects a check with no cluster", () => {
-    assert.match(provider().validateCheck({ cluster: null }), /requires a cluster/);
-    assert.equal(provider().validateCheck({ cluster: "low" }), null);
+  it("rejects a check with no intelligence", () => {
+    assert.match(provider().validateCheck({ intelligence: null }), /requires intelligence/);
+    assert.equal(provider().validateCheck({ intelligence: "low", cluster: "low" }), null);
   });
 
   it("prices through the session-cost endpoint, labelled as router cost", async () => {

@@ -119,6 +119,39 @@ describe("action.yml", () => {
     }
   });
 
+  it("documents caller-owned permissions, token/secrets passing, and fork limits", () => {
+    const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
+    for (const phrase of ["cannot grant GitHub permissions", "cannot read the caller's secrets", "checks: write", "pull-requests: write", "read-only access", "pull_request_target"]) {
+      assert.ok(readme.includes(phrase), `README should explain ${phrase}`);
+    }
+    assert.match(readme, /upload-diagnostics.*false/s);
+  });
+
+  it("self-check uses Router credentials, same-repository pull_request, and the approved policy", () => {
+    const workflow = readFileSync(path.join(ROOT, ".github", "workflows", "self-check.yml"), "utf8");
+    assert.match(workflow, /pull_request:/);
+    assert.doesNotMatch(workflow, /^  pull_request_target:/m);
+    assert.match(workflow, /head\.repo\.full_name == github\.repository/);
+    assert.match(workflow, /secrets\.WEAVE_ROUTER_KEY/);
+    assert.match(workflow, /secrets\.WEAVE_API_KEY/);
+    assert.match(workflow, /provider: weave-router/);
+    assert.match(workflow, /allowed-intelligence: low,medium,high,maximum/);
+    assert.doesNotMatch(workflow, /allowed-models:|allowed-clusters:|require-cluster:/);
+    assert.match(workflow, /checkout: false/);
+  });
+
+  it("uses trusted npm publishing with OIDC only in the publish job", () => {
+    const workflow = readFileSync(path.join(ROOT, ".github", "workflows", "publish_npm.yml"), "utf8");
+    assert.match(workflow, /id-token: write/);
+    assert.match(workflow, /npm publish --provenance --access public/);
+    assert.match(workflow, /checks-v\*/);
+    assert.match(workflow, /merge-base --is-ancestor/);
+    assert.match(workflow, /workflow=publish_npm\.yml/);
+    for (const uses of workflow.matchAll(/^\s+uses: (.+)$/gm)) {
+      assert.match(uses[1], /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}/, uses[1]);
+    }
+  });
+
   it("defaults to the generic provider and Weave branding", () => {
     assert.equal(INPUT_DEFAULTS.provider, "anthropic");
     assert.equal(INPUT_DEFAULTS["checks-dir"], ".weave-checks");

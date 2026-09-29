@@ -8,7 +8,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   CLI_RESULT_SUBTYPE,
   CLUSTER_LOW,
-  MODEL_HAIKU_45,
+  MODEL_HAIKU,
   OUTCOME,
   VERDICT,
 } from "./parse.mjs";
@@ -29,7 +29,8 @@ const CHECK = {
   slug: "demo-check",
   name: "Demo Check",
   description: "Flags demo violations",
-  model: MODEL_HAIKU_45,
+  intelligence: CLUSTER_LOW,
+  model: MODEL_HAIKU,
   cluster: CLUSTER_LOW,
   path: ".weave-checks/demo-check.md",
 };

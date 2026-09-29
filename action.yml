@@ -40,21 +40,12 @@ inputs:
   doc-files:
     description: Comma-separated Markdown files in checks-dir that are documentation, not checks.
     default: README.md
-  allowed-models:
-    description: Comma-separated allowlist for a check's `model`. Empty accepts any well-formed model name.
-    default: ""
-  allowed-clusters:
-    description: Comma-separated allowlist for a check's `cluster`. Empty accepts any well-formed cluster name.
-    default: ""
-  require-cluster:
-    description: Fail discovery for a check with no `cluster`. Always on for provider weave-router.
-    default: "false"
-  default-model:
-    description: Model for a check that declares none. Empty uses the Claude CLI's own default.
+  allowed-intelligence:
+    description: Comma-separated allowlist for check `intelligence`. Values are low, medium, high, maximum; empty accepts all four.
     default: ""
   dedup-model:
-    description: Model for the duplicate-finding judge.
-    default: claude-haiku-4-5
+    description: Rolling Claude Code alias for the duplicate-finding judge.
+    default: haiku
   dedup-cluster:
     description: Cluster for the duplicate-finding judge (provider weave-router).
     default: low
@@ -205,10 +196,7 @@ runs:
         WEAVE_CHECKS_DIR: ${{ inputs.checks-dir }}
         WEAVE_CHECKS_DOC_FILES: ${{ inputs.doc-files }}
         WEAVE_CHECKS_PROVIDER: ${{ inputs.provider }}
-        WEAVE_CHECKS_ALLOWED_MODELS: ${{ inputs.allowed-models }}
-        WEAVE_CHECKS_ALLOWED_CLUSTERS: ${{ inputs.allowed-clusters }}
-        WEAVE_CHECKS_REQUIRE_CLUSTER: ${{ inputs.require-cluster }}
-        WEAVE_CHECKS_DEFAULT_MODEL: ${{ inputs.default-model }}
+        WEAVE_CHECKS_ALLOWED_INTELLIGENCE: ${{ inputs.allowed-intelligence }}
         WEAVE_CHECKS_DIFF_BASE: ${{ inputs.diff-base }}
         WEAVE_CHECKS_AGGREGATE_NAME: ${{ inputs.aggregate-name }}
       run: node "${ACTION_PATH}/bin/cli.mjs" prepare

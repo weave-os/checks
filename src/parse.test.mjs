@@ -8,16 +8,15 @@ import {
   RESULT_SCHEMA,
   DEDUP_SCHEMA,
   GENERIC_POLICY,
-  MODEL_HAIKU_45,
-  MODEL_OPUS_4_8,
-  MODEL_OPUS_5,
-  MODEL_SONNET_4_6,
-  MODEL_SONNET_5,
+  MODEL_FOR_INTELLIGENCE,
+  MODEL_HAIKU,
+  MODEL_OPUS,
+  MODEL_SONNET,
   WEAVE_POLICY,
   policyFrom,
   RESOLUTION_SCHEMA,
   SUPPORTED_CLUSTERS,
-  SUPPORTED_MODELS,
+  SUPPORTED_INTELLIGENCE,
   VERDICT,
   buildMatrix,
   everyCheckReviewed,
@@ -41,8 +40,7 @@ const CHECKS_DIR = path.join(__dirname, "fixtures", "checks");
 const VALID = `---
 name: Example Check
 description: Does a thing
-model: claude-haiku-4-5
-cluster: low
+intelligence: low
 ---
 
 Body text.
@@ -53,14 +51,27 @@ function file(text, filePath = ".weave-checks/example.md") {
 }
 
 describe("parseCheckFile", () => {
-  it("parses a valid check", () => {
+  it("parses intelligence and derives the rolling model alias and Router cluster", () => {
     const check = parseCheckFile(VALID, ".weave-checks/example.md");
     assert.equal(check.slug, "example");
     assert.equal(check.name, "Example Check");
     assert.equal(check.description, "Does a thing");
-    assert.equal(check.model, "claude-haiku-4-5");
+    assert.equal(check.intelligence, "low");
+    assert.equal(check.model, "haiku");
     assert.equal(check.cluster, "low");
     assert.equal(check.body.trim(), "Body text.");
+  });
+
+  it("maps each intelligence tier to a rolling model alias", () => {
+    assert.deepEqual(MODEL_FOR_INTELLIGENCE, {
+      low: "haiku",
+      medium: "sonnet",
+      high: "opus",
+      maximum: "opus",
+    });
+    assert.equal(MODEL_HAIKU, "haiku");
+    assert.equal(MODEL_SONNET, "sonnet");
+    assert.equal(MODEL_OPUS, "opus");
   });
 
   it("rejects a file with no frontmatter", () => {
@@ -70,7 +81,7 @@ describe("parseCheckFile", () => {
     );
   });
 
-  for (const key of ["name", "description", "model", "cluster"]) {
+  for (const key of ["name", "description", "intelligence"]) {
     it(`rejects frontmatter missing ${key}`, () => {
       const text = VALID.split("\n")
         .filter((line) => !line.startsWith(`${key}:`))
@@ -82,22 +93,29 @@ describe("parseCheckFile", () => {
     });
   }
 
-  it("rejects an unsupported model", () => {
-    const text = VALID.replace("claude-haiku-4-5", "gpt-4o");
-    assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unsupported model/);
+  it("rejects unsupported intelligence values", () => {
+    for (const intelligence of ["max", "fast", "Low", "haiku"]) {
+      const text = VALID.replace("intelligence: low", `intelligence: ${intelligence}`);
+      assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unsupported intelligence/);
+    }
   });
 
-  it("rejects an unsupported cluster", () => {
-    const text = VALID.replace("cluster: low", "cluster: explore");
-    assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unsupported cluster/);
+  it("supports the cluster vocabulary as intelligence values", () => {
+    assert.deepEqual([...SUPPORTED_INTELLIGENCE].sort(), ["high", "low", "maximum", "medium"]);
+    assert.equal(SUPPORTED_INTELLIGENCE, SUPPORTED_CLUSTERS);
   });
 
-  it("supports only the live production routing clusters", () => {
-    assert.deepEqual([...SUPPORTED_CLUSTERS].sort(), ["high", "low", "maximum", "medium"]);
+  it("rejects legacy model and cluster frontmatter instead of silently ignoring it", () => {
+    for (const legacy of ["model: claude-haiku-4-5", "cluster: low"]) {
+      assert.throws(
+        () => parseCheckFile(VALID.replace("intelligence: low", `intelligence: low\n${legacy}`), "checks/x.md"),
+        /unknown frontmatter key/,
+      );
+    }
   });
 
   it("rejects an empty body", () => {
-    const text = `---\nname: X\ndescription: Y\nmodel: claude-haiku-4-5\ncluster: low\n---\n\n\n`;
+    const text = `---\nname: X\ndescription: Y\nintelligence: low\n---\n\n\n`;
     assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /body is empty/);
   });
 
@@ -107,7 +125,7 @@ describe("parseCheckFile", () => {
   });
 
   it("rejects unknown frontmatter keys", () => {
-    const text = VALID.replace("model: claude-haiku-4-5", "model: claude-haiku-4-5\nowner: platform");
+    const text = VALID.replace("intelligence: low", "intelligence: low\nowner: platform");
     assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unknown frontmatter key "owner"/);
   });
 
@@ -117,83 +135,39 @@ describe("parseCheckFile", () => {
 });
 
 describe("parseCheckFile policies", () => {
-  const WITHOUT_ROUTING = `---\nname: Bare\ndescription: No routing keys\n---\n\nBody.\n`;
+  const WITHOUT_INTELLIGENCE = `---\nname: Bare\ndescription: No intelligence\n---\n\nBody.\n`;
 
-  it("keeps the Weave Router model list pinned", () => {
-    // The self-check workflow and any Weave adopter depend on this exact set;
-    // widening it is a deliberate change, not a side effect of a refactor.
-    assert.deepEqual(
-      [...SUPPORTED_MODELS].sort(),
-      [MODEL_HAIKU_45, MODEL_OPUS_4_8, MODEL_OPUS_5, MODEL_SONNET_4_6, MODEL_SONNET_5].sort(),
-    );
-    assert.equal(WEAVE_POLICY.allowedModels, SUPPORTED_MODELS);
-    assert.equal(WEAVE_POLICY.requireCluster, true);
-  });
-
-  it("defaults to the Weave policy", () => {
-    assert.throws(() => parseCheckFile(WITHOUT_ROUTING, "checks/bare.md"), /missing required key "model"/);
-  });
-
-  it("serializes absent model and cluster as null under the generic policy", () => {
-    const check = parseCheckFile(WITHOUT_ROUTING, "checks/bare.md", GENERIC_POLICY);
-    assert.equal(check.model, null);
-    assert.equal(check.cluster, null);
-    const [entry] = buildMatrix([file(WITHOUT_ROUTING, "checks/bare.md")], GENERIC_POLICY);
-    assert.ok(Object.hasOwn(entry, "cluster"));
-    assert.equal(entry.cluster, null);
-  });
-
-  it("applies the policy's default model to a check that declares none", () => {
-    const policy = policyFrom({ defaultModel: "claude-sonnet-4-5" });
-    assert.equal(parseCheckFile(WITHOUT_ROUTING, "checks/bare.md", policy).model, "claude-sonnet-4-5");
-  });
-
-  it("accepts any well-formed model without an allowlist", () => {
-    for (const model of ["claude-sonnet-4-5", "us.anthropic.claude-opus-4-1-v1:0", "sonnet"]) {
-      const text = VALID.replace("claude-haiku-4-5", model);
-      assert.equal(parseCheckFile(text, "checks/x.md", GENERIC_POLICY).model, model);
-    }
-  });
-
-  it("rejects a malformed model without an allowlist", () => {
-    for (const model of ["-flag", "two words", "bad\u0000byte"]) {
-      const text = VALID.replace("claude-haiku-4-5", model);
-      assert.throws(() => parseCheckFile(text, "checks/x.md", GENERIC_POLICY), /malformed model name/);
-    }
-  });
-
-  it("names the fix for a Continue-style provider-prefixed model", () => {
-    const text = VALID.replace("claude-haiku-4-5", "anthropic/claude-haiku-4-5");
+  it("requires intelligence under both generic and Weave policies", () => {
     for (const policy of [WEAVE_POLICY, GENERIC_POLICY]) {
       assert.throws(
-        () => parseCheckFile(text, "checks/x.md", policy),
-        /uses a provider prefix; write the bare Claude model name \(e\.g\. "claude-haiku-4-5"\)/,
+        () => parseCheckFile(WITHOUT_INTELLIGENCE, "checks/bare.md", policy),
+        /missing required key "intelligence"/,
       );
     }
   });
 
-  it("enforces caller-supplied allowlists", () => {
-    const policy = policyFrom({ allowedModels: ["claude-sonnet-4-5"], allowedClusters: ["fast"] });
-    assert.throws(() => parseCheckFile(VALID, "checks/x.md", policy), /unsupported model "claude-haiku-4-5" \(allowed: claude-sonnet-4-5\)/);
-    const ok = VALID.replace("claude-haiku-4-5", "claude-sonnet-4-5").replace("cluster: low", "cluster: fast");
-    assert.equal(parseCheckFile(ok, "checks/x.md", policy).cluster, "fast");
-  });
-
-  it("requires a cluster when the policy says so", () => {
-    const text = VALID.split("\n").filter((line) => !line.startsWith("cluster:")).join("\n");
-    assert.throws(() => parseCheckFile(text, "checks/x.md", policyFrom({ requireCluster: true })), /missing required key "cluster"/);
-  });
-
-  it("rejects a malformed cluster without an allowlist", () => {
-    const text = VALID.replace("cluster: low", "cluster: Low Tier");
-    assert.throws(() => parseCheckFile(text, "checks/x.md", GENERIC_POLICY), /malformed cluster name/);
-  });
-
-  it("rejects a default model outside the allowlist", () => {
-    assert.throws(
-      () => policyFrom({ allowedModels: ["claude-sonnet-4-5"], defaultModel: "claude-haiku-4-5" }),
-      /unsupported model/,
+  it("always serializes intelligence, its model alias, and its Router cluster in the matrix", () => {
+    const [entry] = buildMatrix([file(VALID, "checks/bare.md")], GENERIC_POLICY);
+    assert.deepEqual(
+      { intelligence: entry.intelligence, model: entry.model, cluster: entry.cluster },
+      { intelligence: "low", model: "haiku", cluster: "low" },
     );
+  });
+
+  it("allows callers to constrain intelligence values", () => {
+    const policy = policyFrom({ allowedIntelligence: ["low", "medium"] });
+    assert.equal(parseCheckFile(VALID, "checks/x.md", policy).model, "haiku");
+    const high = VALID.replace("intelligence: low", "intelligence: high");
+    assert.throws(() => parseCheckFile(high, "checks/x.md", policy), /unsupported intelligence "high"/);
+    assert.throws(() => policyFrom({ allowedIntelligence: ["fast"] }), /unsupported intelligence in allowlist/);
+  });
+
+  it("accepts an empty allowlist as all four supported values", () => {
+    assert.equal(policyFrom().allowedIntelligence, SUPPORTED_INTELLIGENCE);
+    for (const intelligence of SUPPORTED_INTELLIGENCE) {
+      const text = VALID.replace("intelligence: low", `intelligence: ${intelligence}`);
+      assert.equal(parseCheckFile(text, "checks/x.md", GENERIC_POLICY).intelligence, intelligence);
+    }
   });
 
   it("rejects a check file name outside the marker vocabulary", () => {
@@ -207,14 +181,17 @@ describe("parseCheckFile policies", () => {
 });
 
 describe("buildMatrix provider validation", () => {
-  it("fails discovery with the provider's error and the offending path", () => {
-    const noCluster = VALID.split("\n").filter((line) => !line.startsWith("cluster:")).join("\n");
-    const validateCheck = (check) => (check.cluster === null ? "requires a cluster" : null);
-    assert.throws(
-      () => buildMatrix([file(noCluster, "checks/a.md")], GENERIC_POLICY, validateCheck),
-      /checks\/a\.md: requires a cluster/,
-    );
+  it("runs provider validation on the normalized intelligence-derived cluster", () => {
+    const validateCheck = (check) =>
+      check.intelligence === "low" && check.model === "haiku" && check.cluster === "low"
+        ? null
+        : "expected matching intelligence, alias, and cluster";
     assert.equal(buildMatrix([file(VALID, "checks/a.md")], GENERIC_POLICY, validateCheck).length, 1);
+    const high = VALID.replace("intelligence: low", "intelligence: high");
+    assert.throws(
+      () => buildMatrix([file(high, "checks/a.md")], GENERIC_POLICY, validateCheck),
+      /checks\/a\.md: expected matching intelligence, alias, and cluster/,
+    );
   });
 });
 
@@ -301,6 +278,7 @@ describe("buildMatrix", () => {
     assert.deepEqual(Object.keys(entry).sort(), [
       "cluster",
       "description",
+      "intelligence",
       "model",
       "name",
       "path",
@@ -713,7 +691,7 @@ describe("DEDUP_SCHEMA", () => {
 });
 
 // Exercises discovery end to end over an on-disk checks directory: a check
-// with bad frontmatter, a duplicate display name, or an unsupported model
+// with bad frontmatter, a duplicate display name, or unsupported intelligence
 // would otherwise only fail once the workflow ran on a PR.
 describe("fixture checks directory", () => {
   const files = fs
@@ -728,14 +706,17 @@ describe("fixture checks directory", () => {
     const matrix = buildMatrix(files);
     assert.ok(matrix.length > 0, "expected at least one check");
     for (const entry of matrix) {
-      assert.ok(SUPPORTED_MODELS.has(entry.model), `${entry.path}: ${entry.model}`);
-      assert.ok(SUPPORTED_CLUSTERS.has(entry.cluster), `${entry.path}: ${entry.cluster}`);
+      assert.ok(SUPPORTED_INTELLIGENCE.has(entry.intelligence), `${entry.path}: ${entry.intelligence}`);
+      assert.ok(["haiku", "sonnet", "opus"].includes(entry.model), `${entry.path}: ${entry.model}`);
+      assert.equal(entry.cluster, entry.intelligence);
     }
   });
 
-  it("declares no Continue-style model names", () => {
+  it("declares no version-pinned model or separate cluster field", () => {
     for (const { path: filePath, text } of files) {
-      assert.doesNotMatch(text, /^model:\s*anthropic\//m, filePath);
+      assert.doesNotMatch(text, /^model:/m, filePath);
+      assert.doesNotMatch(text, /^cluster:/m, filePath);
+      assert.match(text, /^intelligence: (low|medium|high|maximum)$/m, filePath);
     }
   });
 

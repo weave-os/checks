@@ -5,32 +5,16 @@
 // with bare `node` before any install step, and so the parsing rules are unit
 // testable (parse.test.mjs) rather than embedded in shell.
 
-// Weave Router's approved model list. Under WEAVE_POLICY an unlisted value
-// fails discovery rather than silently falling back, so a typo can never
-// quietly re-route a check onto a different-cost model. Named constants are
-// exported alongside the set so callers (worker.mjs's dedup judge is one) can
-// pin to a specific model without restating the string literal.
-export const MODEL_HAIKU_45 = "claude-haiku-4-5";
-export const MODEL_SONNET_4_6 = "claude-sonnet-4-6";
-export const MODEL_SONNET_5 = "claude-sonnet-5";
-export const MODEL_OPUS_4_8 = "claude-opus-4-8";
-export const MODEL_OPUS_5 = "claude-opus-5";
-export const SUPPORTED_MODELS = new Set([
-  MODEL_HAIKU_45,
-  MODEL_SONNET_4_6,
-  MODEL_SONNET_5,
-  MODEL_OPUS_4_8,
-  MODEL_OPUS_5,
-]);
+// Rolling Claude Code aliases, derived from the check's intelligence tier.
+// These names intentionally track the latest model in each family rather
+// than pinning check files to a dated or versioned model ID.
+export const MODEL_HAIKU = "haiku";
+export const MODEL_SONNET = "sonnet";
+export const MODEL_OPUS = "opus";
 
-// Routing clusters a check may declare in its frontmatter, sent to Weave
-// Router as the `X-Weave-Force-Cluster` header. These are the classifier
-// groups on the Router's production roster -- not an arbitrary label set.
-// `model` still anchors cost -- the router prices and bills against it -- but
-// `cluster` is what actually constrains which model serves the turn; the
-// router 400s if the two ever name incompatible tiers. `explore` is reserved
-// for the router's own repository-exploration turn type and never a check's
-// own declared cluster.
+// Routing clusters a check may declare in its `intelligence` frontmatter.
+// In Router mode that one value both chooses the model family and becomes the
+// X-Weave-Force-Cluster header, preventing a model/cluster mismatch.
 export const CLUSTER_LOW = "low";
 export const CLUSTER_MEDIUM = "medium";
 export const CLUSTER_HIGH = "high";
@@ -41,54 +25,40 @@ export const SUPPORTED_CLUSTERS = new Set([
   CLUSTER_HIGH,
   CLUSTER_MAXIMUM,
 ]);
+export const SUPPORTED_INTELLIGENCE = SUPPORTED_CLUSTERS;
+
+// Every review invocation chooses its rolling alias from this mapping. The
+// Router still uses the corresponding intelligence value as its force-cluster
+// signal and may serve any currently eligible model within that cluster.
+export const MODEL_FOR_INTELLIGENCE = Object.freeze({
+  [CLUSTER_LOW]: MODEL_HAIKU,
+  [CLUSTER_MEDIUM]: MODEL_SONNET,
+  [CLUSTER_HIGH]: MODEL_OPUS,
+  [CLUSTER_MAXIMUM]: MODEL_OPUS,
+});
+
+export function modelForIntelligence(intelligence) {
+  return SUPPORTED_INTELLIGENCE.has(intelligence)
+    ? MODEL_FOR_INTELLIGENCE[intelligence]
+    : null;
+}
 
 // Files in a checks directory that are documentation, not checks, unless a
 // policy names its own (`docFiles`).
 export const DEFAULT_DOC_FILES = new Set(["README.md"]);
 
-// Validation policy for a check's `model` and `cluster` frontmatter.
-//
-//   allowedModels  -- Set of exact model strings, or null to accept any
-//                     single-token model name (MODEL_NAME below).
-//   allowedClusters -- Set of exact cluster names, or null to accept any
-//                     CLUSTER_NAME-shaped value.
-//   requireModel   -- a check with no `model` fails discovery. Otherwise it
-//                     falls back to `defaultModel`, and with no default the
-//                     CLI's own default model serves it.
-//   requireCluster -- a check with no `cluster` fails discovery.
-//   defaultModel   -- model applied to a check that declares none.
-//   docFiles       -- Set of Markdown filenames in the checks directory that
-//                     are documentation, not checks.
-//
-// WEAVE_POLICY is today's strict Weave Router contract and the default for
-// buildMatrix()/parseCheckFile() so existing callers keep their behaviour.
-// GENERIC_POLICY is the starting point for any other provider.
+// Validation policy for a check's single `intelligence` frontmatter value.
+// Both providers accept the same four tier names; callers may restrict that
+// set for a particular repository. The tier is required for every provider.
 export const WEAVE_POLICY = Object.freeze({
-  allowedModels: SUPPORTED_MODELS,
-  allowedClusters: SUPPORTED_CLUSTERS,
-  requireModel: true,
-  requireCluster: true,
-  defaultModel: null,
+  allowedIntelligence: SUPPORTED_INTELLIGENCE,
   docFiles: DEFAULT_DOC_FILES,
 });
 
 export const GENERIC_POLICY = Object.freeze({
-  allowedModels: null,
-  allowedClusters: null,
-  requireModel: false,
-  requireCluster: false,
-  defaultModel: null,
+  allowedIntelligence: SUPPORTED_INTELLIGENCE,
   docFiles: DEFAULT_DOC_FILES,
 });
-
-// Model names travel to the CLI as one `--model` argument and, under Weave
-// Router, into cost accounting. One line, no spaces, and a leading
-// alphanumeric keep a stray value from being read as a flag or splitting.
-const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
-
-// Clusters ride in an HTTP header value; restrict them to the same slug
-// vocabulary as check names so a header can never be split or smuggled.
-const CLUSTER_NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 // A check's slug (its filename without `.md`) is written into every comment
 // marker and matched back by history.mjs's marker regex. A slug outside this
@@ -97,14 +67,13 @@ export const SLUG_PATTERN = /^[a-z0-9-]+$/;
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 
-// Frontmatter is a fixed four-key contract (name, description, and the
-// optional model and cluster), so a line-oriented reader is enough -- no YAML
-// dependency, and anything that doesn't fit the contract is rejected instead
-// of half-understood.
+// Frontmatter is a fixed three-key contract (name, description, and
+// intelligence), so a line-oriented reader is enough -- no YAML dependency,
+// and anything that doesn't fit the contract is rejected instead of
+// half-understood.
 // Keys the contract permits in a check's frontmatter. Anything else is
-// rejected (after required-key checks below) so a misspelled or made-up
-// metadata field fails discovery rather than silently corrupting the matrix.
-const FRONTMATTER_KEYS = new Set(["name", "description", "model", "cluster"]);
+// rejected so a misspelled or made-up field fails discovery loudly.
+const FRONTMATTER_KEYS = new Set(["name", "description", "intelligence"]);
 
 function parseFrontmatter(text) {
   const match = FRONTMATTER.exec(text);
@@ -221,9 +190,9 @@ export function ignorePathspecs(patterns) {
 // Parses one check file into a matrix entry. Throws with the offending path so
 // a bad check fails discovery loudly instead of being skipped.
 //
-// `model` and `cluster` are always present on the result, as null when the
-// check declares neither and the policy supplies no default, so every
-// consumer can test for absence the same way.
+// The source frontmatter has one tier field, `intelligence`. The normalized
+// entry carries `model` (its rolling CLI alias) and `cluster` (the same tier,
+// for Router routing) so the runner and provider boundary stay explicit.
 export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
   let parsed;
   try {
@@ -240,21 +209,20 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
   }
 
   const { fields, body } = parsed;
-  const requiredKeys = [
-    "name",
-    "description",
-    ...(policy.requireModel ? ["model"] : []),
-    ...(policy.requireCluster ? ["cluster"] : []),
-  ];
-  for (const key of requiredKeys) {
+  for (const key of ["name", "description", "intelligence"]) {
     const value = fields.get(key);
     if (value === undefined || value === "") {
       throw new Error(`${filePath}: frontmatter is missing required key "${key}"`);
     }
   }
 
-  const model = validateModel(fields.get("model") || policy.defaultModel || null, filePath, policy);
-  const cluster = validateCluster(fields.get("cluster") || null, filePath, policy);
+  const intelligence = fields.get("intelligence");
+  const allowed = policy.allowedIntelligence ?? SUPPORTED_INTELLIGENCE;
+  if (!SUPPORTED_INTELLIGENCE.has(intelligence) || !allowed.has(intelligence)) {
+    throw new Error(
+      `${filePath}: unsupported intelligence "${intelligence}" (allowed: ${[...allowed].sort().join(", ")})`,
+    );
+  }
 
   if (body.trim() === "") {
     throw new Error(`${filePath}: check body is empty`);
@@ -264,51 +232,12 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
     slug,
     name: fields.get("name"),
     description: fields.get("description"),
-    model,
-    cluster,
+    intelligence,
+    model: modelForIntelligence(intelligence),
+    cluster: intelligence,
     path: filePath,
     body,
   };
-}
-
-function validateModel(model, filePath, policy) {
-  if (model === null) return null;
-  // Continue's check format names models as `anthropic/<model>`. The Claude
-  // CLI takes the bare model name, so a ported check would otherwise fail at
-  // the first agent call instead of here.
-  if (model.startsWith("anthropic/")) {
-    throw new Error(
-      `${filePath}: model "${model}" uses a provider prefix; write the bare Claude model name (e.g. "${model.slice("anthropic/".length)}")`,
-    );
-  }
-  if (policy.allowedModels !== null) {
-    if (!policy.allowedModels.has(model)) {
-      throw new Error(
-        `${filePath}: unsupported model "${model}" (allowed: ${[...policy.allowedModels].sort().join(", ")})`,
-      );
-    }
-    return model;
-  }
-  if (!MODEL_NAME.test(model)) {
-    throw new Error(`${filePath}: malformed model name "${model}"`);
-  }
-  return model;
-}
-
-function validateCluster(cluster, filePath, policy) {
-  if (cluster === null) return null;
-  if (policy.allowedClusters !== null) {
-    if (!policy.allowedClusters.has(cluster)) {
-      throw new Error(
-        `${filePath}: unsupported cluster "${cluster}" (allowed: ${[...policy.allowedClusters].sort().join(", ")})`,
-      );
-    }
-    return cluster;
-  }
-  if (!CLUSTER_NAME.test(cluster)) {
-    throw new Error(`${filePath}: malformed cluster name "${cluster}"`);
-  }
-  return cluster;
 }
 
 // Builds the job matrix. Display names must be unique: the check-run name is
@@ -344,30 +273,22 @@ export function buildMatrix(files, policy = WEAVE_POLICY, validateCheck = null) 
   return checks.map(({ body: _body, ...entry }) => entry);
 }
 
-// Builds a policy from caller-supplied lists (the action's inputs and the
-// CLI's flags). An empty or absent list means "no allowlist": shape
-// validation only.
-export function policyFrom({
-  allowedModels = [],
-  allowedClusters = [],
-  requireModel = false,
-  requireCluster = false,
-  defaultModel = null,
-  docFiles = [],
-} = {}) {
-  const asSet = (values) => (values.length === 0 ? null : new Set(values));
-  const policy = {
-    allowedModels: asSet(allowedModels),
-    allowedClusters: asSet(allowedClusters),
-    requireModel,
-    requireCluster,
-    defaultModel: defaultModel || null,
-    docFiles: asSet(docFiles) ?? DEFAULT_DOC_FILES,
-  };
-  if (policy.defaultModel !== null) {
-    validateModel(policy.defaultModel, "default model", policy);
+// Builds a policy from caller-supplied intelligence values (the action's
+// input and CLI's flag). An empty or absent list accepts all four tiers.
+export function policyFrom({ allowedIntelligence = [], docFiles = [] } = {}) {
+  const unknown = allowedIntelligence.filter((value) => !SUPPORTED_INTELLIGENCE.has(value));
+  if (unknown.length > 0) {
+    throw new Error(
+      `unsupported intelligence in allowlist: ${unknown.join(", ")} (allowed: ${[...SUPPORTED_INTELLIGENCE].sort().join(", ")})`,
+    );
   }
-  return Object.freeze(policy);
+  return Object.freeze({
+    allowedIntelligence:
+      allowedIntelligence.length === 0
+        ? SUPPORTED_INTELLIGENCE
+        : new Set(allowedIntelligence),
+    docFiles: docFiles.length === 0 ? DEFAULT_DOC_FILES : new Set(docFiles),
+  });
 }
 
 // JSON Schema handed to `claude -p --json-schema`. additionalProperties:false
@@ -727,13 +648,12 @@ export const VERDICT = Object.freeze({
   FAIL: "FAIL",
 });
 
-// Names the duplicate judge explicitly. Same posture as the per-check model:
-// dedup is a narrow yes/no judgment that never inherits a check's (possibly
-// pricier) configured model, so the worker pin this rather than a string.
-export const DEDUP_MODEL = MODEL_HAIKU_45;
-// Same posture for the routing cluster: dedup never inherits a check's own
-// cluster, so it always runs from the cheapest tier regardless of what the
-// check under judgment declares.
+// Names the duplicate judge explicitly. It is a narrow yes/no judgment and
+// never inherits a check's intelligence tier, so it uses the rolling Haiku
+// alias unless action/CLI configuration overrides it.
+export const DEDUP_MODEL = MODEL_HAIKU;
+// Same posture for routing: dedup always uses the lowest intelligence tier,
+// regardless of the check under judgment.
 export const DEDUP_CLUSTER = CLUSTER_LOW;
 
 // Parses `cli.structured_output` into a useable object, JSON-parsing it when

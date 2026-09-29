@@ -44,7 +44,7 @@ export function discoverChecks(
 
 // One human-readable line per check, shared by the script below and the CLI.
 export function describeEntry(entry) {
-  return `${entry.slug}: "${entry.name}" (${entry.model ?? "default model"}, ${entry.cluster ?? "no cluster"})`;
+  return `${entry.slug}: "${entry.name}" (intelligence ${entry.intelligence} → ${entry.model})`;
 }
 
 function main() {

@@ -45,30 +45,20 @@ const POLICY_OPTIONS = {
   "checks-dir": { type: "string", default: DEFAULT_CHECKS_DIR },
   "repo-dir": { type: "string", default: "." },
   provider: { type: "string", default: PROVIDER.INHERIT },
-  "allowed-models": { type: "string", default: "" },
-  "allowed-clusters": { type: "string", default: "" },
-  "require-cluster": { type: "boolean", default: false },
-  "default-model": { type: "string", default: "" },
+  "allowed-intelligence": { type: "string", default: "" },
   "doc-files": { type: "string", default: "README.md" },
 };
 
-const POLICY_HELP = `  --checks-dir <dir>        Checks directory, relative to the repo (default: ${DEFAULT_CHECKS_DIR})
-  --repo-dir <dir>          Repository root (default: .)
-  --provider <name>         anthropic | weave-router | inherit (default: inherit)
-  --allowed-models <list>   Comma-separated model allowlist (default: any well-formed name)
-  --allowed-clusters <list> Comma-separated cluster allowlist
-  --require-cluster         Fail a check with no cluster (always on for weave-router)
-  --default-model <model>   Model for a check that declares none
-  --doc-files <list>        Markdown files in the checks directory that are docs (default: README.md)`;
+const POLICY_HELP = `  --checks-dir <dir>          Checks directory, relative to the repo (default: ${DEFAULT_CHECKS_DIR})
+  --repo-dir <dir>            Repository root (default: .)
+  --provider <name>           anthropic | weave-router | inherit (default: inherit)
+  --allowed-intelligence <list> Comma-separated tiers: low, medium, high, maximum (default: all)
+  --doc-files <list>          Markdown files in the checks directory that are docs (default: README.md)`;
 
 function discoverFromOptions(values) {
   const checksDir = validateChecksDir(values["checks-dir"]);
   const policy = policyForRun({
-    provider: values.provider,
-    allowedModels: values["allowed-models"],
-    allowedClusters: values["allowed-clusters"],
-    requireCluster: values["require-cluster"],
-    defaultModel: values["default-model"],
+    allowedIntelligence: values["allowed-intelligence"],
     docFiles: values["doc-files"],
   });
   return discoverChecks(checksDir, { repoDir: values["repo-dir"], policy });
@@ -285,11 +275,7 @@ ${POLICY_HELP}
       });
 
       const policy = policyForRun({
-        provider: env.WEAVE_CHECKS_PROVIDER,
-        allowedModels: env.WEAVE_CHECKS_ALLOWED_MODELS,
-        allowedClusters: env.WEAVE_CHECKS_ALLOWED_CLUSTERS,
-        requireCluster: parseBoolean("require-cluster", env.WEAVE_CHECKS_REQUIRE_CLUSTER, false),
-        defaultModel: env.WEAVE_CHECKS_DEFAULT_MODEL,
+        allowedIntelligence: env.WEAVE_CHECKS_ALLOWED_INTELLIGENCE,
         docFiles: env.WEAVE_CHECKS_DOC_FILES,
       });
       const matrix = discoverChecks(checksDir, { repoDir, policy });

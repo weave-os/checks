@@ -22,7 +22,7 @@
 // Output contract (OUTPUT_PATH, and the CLI's `--format json`):
 //
 //   { "provider": "<id>", "costLabel": "<how cost was measured>",
-//     "checks": [ { slug, name, model, cluster, outcome, reason, error,
+//     "checks": [ { slug, name, intelligence, model, outcome, reason, error,
 //                   suggestions: [...], proseFallbacks: [...], rejected: [...],
 //                   cost, durationMs } ],
 //     "totals": { pass, flagged, neutral, cost, durationMs } }
@@ -84,11 +84,9 @@ export function readConfig(env) {
       providerEnv: parseProviderEnv(env.WEAVE_CHECKS_PROVIDER_ENV),
     }),
     productName: env.WEAVE_CHECKS_PRODUCT_NAME || undefined,
-    // Optional: a directory of `settings-<cluster>.json` files a wrapper
-    // generated, one per cluster a selected check declares -- typically the
-    // engineer's own settings with that cluster's routing header added, so a
-    // check is served from the SAME cluster it would be in CI. A check with no
-    // cluster gets no overlay.
+    // Optional: a directory of `settings-<intelligence>.json` files a wrapper
+    // generated, one per check's tier. A check's intelligence is also the
+    // cluster used to route it when the selected provider is Weave Router.
     settingsDir: env.SETTINGS_DIR || null,
   };
 }
@@ -106,9 +104,9 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
   const addedLines = parseAddedLines(config.diff);
   const checkResults = await runPool(config.checks, config.parallel, async (check) => {
     process.stderr.write(`Weave Checks: running ${check.slug}...\n`);
-    const settingsPath = config.settingsDir === null || check.cluster === null
+    const settingsPath = config.settingsDir === null
       ? null
-      : path.join(config.settingsDir, `settings-${check.cluster}.json`);
+      : path.join(config.settingsDir, `settings-${check.intelligence}.json`);
     const dropEnv = ["WEAVE_API_KEY"];
     if (settingsPath !== null) {
       // Once the generated --settings overlay exists, inherited routing
@@ -185,8 +183,8 @@ function summarizeCheck(check, checkResult) {
   return {
     slug: check.slug,
     name: check.name,
+    intelligence: check.intelligence,
     model: check.model,
-    cluster: check.cluster,
     outcome: publicOutcome(checkResult.outcome),
     reason: checkResult.reason ?? null,
     error: checkResult.error ?? null,

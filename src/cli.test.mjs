@@ -175,12 +175,21 @@ describe("weave-checks list", () => {
     const space = workspace();
     const ok = space.cli(["list"]);
     assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(ok.stdout, 'alpha-check: "Alpha Check" (claude-haiku-4-5, low)\nbeta-check: "Beta Check" (claude-sonnet-5, medium)\n');
+    assert.equal(ok.stdout, 'alpha-check: "Alpha Check" (intelligence low → haiku)\nbeta-check: "Beta Check" (intelligence medium → sonnet)\n');
 
     writeFileSync(path.join(space.repo, ".weave-checks", "broken.md"), "no frontmatter\n");
     const bad = space.cli(["list"]);
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /broken\.md: missing frontmatter/);
+  });
+
+  it("filters the intelligence allowlist and rejects an excluded tier", () => {
+    const space = workspace();
+    const ok = space.cli(["list", "--allowed-intelligence", "low,medium"]);
+    assert.equal(ok.status, 0, ok.stderr);
+    const bad = space.cli(["list", "--allowed-intelligence", "low"]);
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /unsupported intelligence "medium"/);
   });
 
   it("rejects a checks directory outside the repository", () => {

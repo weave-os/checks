@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { policyFrom } from "./parse.mjs";
-import { PROVIDER } from "./provider.mjs";
 
 // Splits a comma- or newline-separated list input, dropping blanks.
 export function splitList(value) {
@@ -21,15 +20,11 @@ export function parseBoolean(name, value, fallback) {
   throw new Error(`${name} must be "true" or "false", got ${JSON.stringify(value)}`);
 }
 
-// The frontmatter policy for a run. Weave Router serves a check from its
-// declared cluster, so that provider always requires one, whatever the
-// caller asked for.
-export function policyForRun({ provider, allowedModels, allowedClusters, requireCluster, defaultModel, docFiles }) {
+// The frontmatter policy for one run. Intelligence is required for both
+// providers; Weave Router also uses the same value as its force-cluster.
+export function policyForRun({ allowedIntelligence, docFiles }) {
   return policyFrom({
-    allowedModels: splitList(allowedModels),
-    allowedClusters: splitList(allowedClusters),
-    requireCluster: requireCluster === true || provider === PROVIDER.WEAVE_ROUTER,
-    defaultModel: defaultModel || null,
+    allowedIntelligence: splitList(allowedIntelligence),
     docFiles: splitList(docFiles),
   });
 }

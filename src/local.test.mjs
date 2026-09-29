@@ -13,8 +13,8 @@ import { after, describe, it } from "node:test";
 import {
   CLUSTER_LOW,
   CLUSTER_MEDIUM,
-  MODEL_HAIKU_45,
-  MODEL_SONNET_5,
+  MODEL_HAIKU,
+  MODEL_SONNET,
   OUTCOME,
   RESULT_SCHEMA,
 } from "./parse.mjs";
@@ -37,7 +37,8 @@ const CHECKS = [
     slug: "first-check",
     name: "First Check",
     description: "Flags firsts",
-    model: MODEL_HAIKU_45,
+    intelligence: CLUSTER_LOW,
+    model: MODEL_HAIKU,
     cluster: CLUSTER_LOW,
     path: ".weave-checks/first-check.md",
   },
@@ -45,7 +46,8 @@ const CHECKS = [
     slug: "second-check",
     name: "Second Check",
     description: "Flags seconds",
-    model: MODEL_SONNET_5,
+    intelligence: CLUSTER_MEDIUM,
+    model: MODEL_SONNET,
     cluster: CLUSTER_MEDIUM,
     path: ".weave-checks/second-check.md",
   },
@@ -262,7 +264,7 @@ describe("runChecks", () => {
   });
 
 
-  it("passes the generated per-cluster settings path to the evaluator", async () => {
+  it("uses each check's intelligence as the generated settings filename", async () => {
     const { env, tempDir } = fixture();
     env.SETTINGS_DIR = path.join(tempDir, "settings");
     const config = readConfig(env);
@@ -270,39 +272,21 @@ describe("runChecks", () => {
 
     await runChecks(config, {
       evaluate: async ({ check, settingsPath, dropEnv }) => {
-        seen.push({ check: check.slug, settingsPath, dropEnv });
+        seen.push({ intelligence: check.intelligence, settingsPath, dropEnv });
         return passResult("fine");
       },
     });
 
-    assert.equal(
-      seen[0].settingsPath,
-      path.join(config.settingsDir, "settings-low.json"),
-    );
+    assert.deepEqual(seen.map(({ intelligence, settingsPath }) => [intelligence, settingsPath]), [
+      ["low", path.join(config.settingsDir, "settings-low.json")],
+      ["medium", path.join(config.settingsDir, "settings-medium.json")],
+    ]);
     assert.deepEqual(seen[0].dropEnv, [
       "WEAVE_API_KEY",
       "ANTHROPIC_BASE_URL",
       "ANTHROPIC_API_KEY",
       "ANTHROPIC_CUSTOM_HEADERS",
     ]);
-  });
-
-  it("gives a check with no cluster no settings overlay", async () => {
-    const { env, tempDir } = fixture();
-    const matrixPath = path.join(tempDir, "matrix.json");
-    writeFileSync(matrixPath, JSON.stringify({ check: [{ ...CHECKS[0], cluster: null }] }));
-    env.MATRIX_PATH = matrixPath;
-    env.SETTINGS_DIR = path.join(tempDir, "settings");
-    const seen = [];
-
-    await runChecks(readConfig(env), {
-      evaluate: async ({ settingsPath, dropEnv }) => {
-        seen.push({ settingsPath, dropEnv });
-        return passResult("fine");
-      },
-    });
-
-    assert.deepEqual(seen, [{ settingsPath: null, dropEnv: ["WEAVE_API_KEY"] }]);
   });
 
   it("isolates an explicit provider from the engineer's settings", async () => {

@@ -94,15 +94,14 @@ export const WEAVE_CHECKS_USER_EMAIL = "weave-checks@workweave.ai";
 // put every check on per-API Anthropic billing, bypassing the router's own
 // credit/subscription accounting.
 //
-// The check's declared model is still passed to the CLI as `--model`, and still
-// used as the anchor the router prices the turn against -- kept for a stable
-// per-check cost comparison across runs, not because it pins the serving model
-// anymore. Which model actually serves the review is constrained instead by
-// `X-Weave-Force-Cluster`, set here to the check's declared `cluster`: the
-// router's routing policy picks its own best-scoring model from within that
-// cluster on every turn, so review quality tracks the live roster instead of
-// one model going stale. The provider rejects a check without a cluster (see
-// validateCheck below), so this header is always present.
+// The check's `intelligence` chooses a rolling CLI model alias (`haiku`,
+// `sonnet`, or `opus`) and the matching Router cluster. The alias is passed to
+// the CLI as `--model` and is the anchor for per-check cost comparisons; it
+// does not pin the model Router serves. Which model actually serves the review
+// is constrained by `X-Weave-Force-Cluster`, set here from that same
+// intelligence tier: Router picks its best-scoring eligible model in the
+// cluster on each turn. Since intelligence is required and validated during
+// discovery, this header is always present.
 export function routerEnvironment(
   routerKey,
   cluster,
@@ -301,17 +300,16 @@ export function weaveRouterProvider({
     costLabel: "router cost",
     // Neither Weave secret is needed by the CLI child: the router key already
     // rides in ANTHROPIC_CUSTOM_HEADERS, and the Weave API key is only for
-    // the coordinator's cost lookup (both are in COORDINATOR_ONLY_ENV). Any
-    // direct Anthropic credential is dropped too, so it cannot take
-    // precedence over the router placeholder and move a check onto per-API
-    // billing.
+    // the coordinator's cost lookup (both are in COORDINATOR_ONLY_ENV).
+    // Direct auth-token and OAuth variables are removed; any inherited API key
+    // is replaced by the router placeholder in the provider env overlay.
     dropEnv: [...COORDINATOR_ONLY_ENV, "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
     envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { baseUrl, userEmail }),
     resolveCost: ({ sessionId }) =>
       routerSessionCost(sessionId, weaveAPIKey, { apiBaseUrl, ...costOptions }),
     validateCheck: (check) =>
-      check.cluster === null || check.cluster === undefined
-        ? "provider weave-router requires a cluster in the check's frontmatter"
+      check.intelligence === null || check.intelligence === undefined
+        ? "provider weave-router requires intelligence in the check's frontmatter"
         : null,
   });
 }

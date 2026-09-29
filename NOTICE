@@ -9,5 +9,7 @@ Version 2.0:
 
     Copyright 2025 Continue Dev, Inc.
 
-The per-concern Markdown check format, the division of labour between linters,
-tests, and checks, and the overall review design derive from that project.
+The starter-check corpus and per-concern Markdown format adapt material and
+design from Continue Checks; the division of labour between linters, tests,
+and checks also derives from that project. Other starter-check wording and
+criteria have been reviewed and generalized for this package.

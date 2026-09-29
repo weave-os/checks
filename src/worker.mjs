@@ -1551,6 +1551,8 @@ export async function runWorker(config, deps = {}) {
       checks: finalStates.map((state) => ({
         slug: state.check.slug,
         name: state.check.name,
+        intelligence: state.check.intelligence,
+        model: state.check.model,
         outcome: publicOutcome(state.outcome),
         checkRunId: state.checkRunId,
         cost: state.cost ?? null,

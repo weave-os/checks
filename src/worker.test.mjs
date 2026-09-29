@@ -22,8 +22,8 @@ const DIFF = [
 ].join("\n");
 
 const CHECKS = [
-  { slug: "first-check", name: "First Check", description: "Flags firsts", model: "claude-haiku-4-5", cluster: null, path: "checks/first-check.md" },
-  { slug: "second-check", name: "Second Check", description: "Flags seconds", model: null, cluster: null, path: "checks/second-check.md" },
+  { slug: "first-check", name: "First Check", description: "Flags firsts", intelligence: "low", model: "haiku", cluster: "low", path: "checks/first-check.md" },
+  { slug: "second-check", name: "Second Check", description: "Flags seconds", intelligence: "medium", model: "sonnet", cluster: "medium", path: "checks/second-check.md" },
 ];
 
 const ROOTS = [];
@@ -229,6 +229,10 @@ describe("runWorker", () => {
     const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
     assert.deepEqual(results.totals, { pass: 1, flagged: 1, neutral: 0, cost: 0.03, durationMs: 300 });
     assert.deepEqual(results.checks.map((c) => c.outcome), ["flagged", "pass"]);
+    assert.deepEqual(
+      results.checks.map((c) => [c.intelligence, c.model]),
+      [["low", "haiku"], ["medium", "sonnet"]],
+    );
     assert.equal(results.aggregateCheckRunId, "1000");
   });
 

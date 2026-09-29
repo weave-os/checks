@@ -9,11 +9,16 @@ export { readIgnorePathspecs } from "./ignore.mjs";
 export { runChecks } from "./local.mjs";
 export {
   GENERIC_POLICY,
+  MODEL_FOR_INTELLIGENCE,
+  MODEL_HAIKU,
+  MODEL_OPUS,
+  MODEL_SONNET,
   RESULT_SCHEMA,
   SUPPORTED_CLUSTERS,
-  SUPPORTED_MODELS,
+  SUPPORTED_INTELLIGENCE,
   WEAVE_POLICY,
   buildMatrix,
+  modelForIntelligence,
   parseCheckFile,
   policyFrom,
 } from "./parse.mjs";
