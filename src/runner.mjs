@@ -400,7 +400,7 @@ export function promptFor(
   check,
   { repoDir, diff, stat, historySection = null, productName = DEFAULT_BRANDING.productName },
 ) {
-  const criteria = readFileSync(path.join(repoDir, check.path), "utf8");
+  const criteria = readFileSync(check.criteriaPath ?? path.join(repoDir, check.path), "utf8");
   return [
     `You are running the advisory ${productName} "${check.name}" on a pull request.`,
     "",

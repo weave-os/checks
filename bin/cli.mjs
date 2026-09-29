@@ -16,7 +16,12 @@ import {
   writeOutputs,
   writeStepSummary,
 } from "../src/ci.mjs";
-import { DEFAULT_CHECKS_DIR, describeEntry, discoverChecks } from "../src/discover.mjs";
+import {
+  DEFAULT_CHECKS_DIR,
+  describeEntry,
+  discoverChecks,
+  discoverChecksWithDefaults,
+} from "../src/discover.mjs";
 import { createGitHubClient, permissionHint } from "../src/github.mjs";
 import { gitLine } from "../src/git.mjs";
 import {
@@ -236,7 +241,8 @@ ${POLICY_HELP}
       if (values.format === "json") {
         process.stdout.write(`${JSON.stringify({ check: matrix }, null, 2)}\n`);
       } else if (values.format === "text") {
-        for (const entry of matrix) process.stdout.write(`${describeEntry(entry)}\n`);
+        for (const entry of matrix)
+          process.stdout.write(`${describeEntry(entry, values.provider)}\n`);
       } else {
         throw new Error(`--format must be text or json, got ${JSON.stringify(values.format)}`);
       }
@@ -323,6 +329,11 @@ ${POLICY_HELP}
       const outDir = requiredEnv("WEAVE_CHECKS_TEMP_DIR");
       const headSha = requiredEnv("HEAD_SHA");
       const checksDir = validateChecksDir(env.WEAVE_CHECKS_DIR || DEFAULT_CHECKS_DIR);
+      const useDefaultChecks = parseBoolean(
+        "use-default-checks",
+        env.WEAVE_CHECKS_USE_DEFAULT_CHECKS,
+        false,
+      );
       mkdirSync(outDir, { recursive: true });
 
       console.error(verifyCheckout({ repoDir, headSha }));
@@ -353,8 +364,16 @@ ${POLICY_HELP}
         allowedIntelligence: env.WEAVE_CHECKS_ALLOWED_INTELLIGENCE,
         docFiles: env.WEAVE_CHECKS_DOC_FILES,
       });
-      const matrix = discoverChecks(checksDir, { repoDir, policy });
-      for (const entry of matrix) console.error(`discovered ${describeEntry(entry)}`);
+      const matrix = discoverChecksWithDefaults(checksDir, {
+        repoDir,
+        policy,
+        useDefaultChecks,
+        starterChecksDir: useDefaultChecks ? requiredEnv("WEAVE_CHECKS_STARTER_DIR") : undefined,
+      });
+      for (const entry of matrix)
+        console.error(
+          `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "anthropic")}`,
+        );
       writeFileSync(path.join(outDir, "matrix.json"), `${JSON.stringify({ check: matrix })}\n`);
 
       if (env.GITHUB_STEP_SUMMARY) {

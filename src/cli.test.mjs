@@ -223,8 +223,16 @@ describe("weave-checks list", () => {
     assert.equal(ok.status, 0, ok.stderr);
     assert.equal(
       ok.stdout,
-      'alpha-check: "Alpha Check" (intelligence low → haiku)\nbeta-check: "Beta Check" (intelligence medium → sonnet)\n',
+      'alpha-check: "Alpha Check" (intelligence low)\nbeta-check: "Beta Check" (intelligence medium)\n',
     );
+
+    const anthropic = space.cli(["list", "--provider", "anthropic"]);
+    assert.equal(anthropic.status, 0, anthropic.stderr);
+    assert.match(anthropic.stdout, /intelligence low → haiku/);
+
+    const router = space.cli(["list", "--provider", "weave-router"]);
+    assert.equal(router.status, 0, router.stderr);
+    assert.doesNotMatch(router.stdout, /→ haiku/);
 
     writeFileSync(path.join(space.repo, ".weave-checks", "broken.md"), "no frontmatter\n");
     const bad = space.cli(["list"]);

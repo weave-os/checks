@@ -4,7 +4,7 @@
 
 Advisory, per-concern code review for GitHub pull requests. Write one Markdown file for each review concern; Weave Checks runs a read-only agent against each check's criteria and the pull request's changed lines. Findings appear as review comments or on the check run. Operational misses stay neutral instead of masquerading as a pass or a finding.
 
-This repository contains the reusable GitHub workflow (and the action it runs), the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**: the action does not impose a universal coding policy.
+This repository contains the reusable GitHub workflow (and the action it runs), the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**; opt into the starter checks with `use-default-checks: true` when you want them alongside your own.
 
 > The generic starter-check corpus and per-concern review format adapt material and design from [Continue Checks](https://github.com/continuedev/checks), Copyright 2025 Continue Dev, Inc., Apache-2.0. See [`NOTICE`](NOTICE) for attribution and [`LICENSE`](LICENSE) for this package's license.
 
@@ -102,7 +102,7 @@ build/generated/*.go
 
 Blank lines and `#` comments are ignored. Unsafe patterns that can exclude the whole repository or escape its root fail discovery rather than silently disabling review.
 
-The 11 generic checks in [`starter-checks/`](starter-checks/) are examples to copy and adapt. The additional checks in [`checks-library/`](checks-library/) target concerns that may make sense for some repositories but are not universal defaults; see its README before adopting any. Neither collection is automatically imposed by the action. Checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
+The 11 generic checks in [`starter-checks/`](starter-checks/) are available as optional defaults. Set `use-default-checks: true` to run them alongside any checks in your configured `checks-dir`; without that setting, only your directory is used. The additional checks in [`checks-library/`](checks-library/) target concerns that may make sense for some repositories but are not universal defaults; see its README before adopting any. Checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
 
 ## Local CLI
 
@@ -133,6 +133,7 @@ npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format 
 | --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
 | `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
 | `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
+| `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
 | `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
 | `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
 | `concurrency`         | `16`            | Checks run at once.                                                                                      |

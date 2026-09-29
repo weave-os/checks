@@ -29,6 +29,10 @@ on:
         description: Directory of check files, relative to the repository root.
         type: string
         default: .weave-checks
+      use-default-checks:
+        description: Also run this package's starter checks alongside checks-dir.
+        type: boolean
+        default: false
       doc-files:
         description: Comma-separated Markdown files in checks-dir that are documentation, not checks.
         type: string
@@ -197,6 +201,7 @@ jobs:
           claude-code-oauth-token: ${{ secrets.claude-code-oauth-token }}
           provider-env: ${{ secrets.provider-env }}
           checks-dir: ${{ inputs.checks-dir }}
+          use-default-checks: ${{ inputs.use-default-checks }}
           doc-files: ${{ inputs.doc-files }}
           diff-base: ${{ inputs.diff-base }}
           concurrency: ${{ inputs.concurrency }}

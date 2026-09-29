@@ -253,20 +253,30 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
 export function buildMatrix(files, policy = WEAVE_POLICY) {
   const checks = files
     .filter(file => isCheckFile(file.path, policy.docFiles ?? DEFAULT_DOC_FILES))
-    .map(file => parseCheckFile(file.text, file.path, policy))
+    .map(file => ({
+      ...parseCheckFile(file.text, file.path, policy),
+      ...(file.criteriaPath === undefined ? {} : { criteriaPath: file.criteriaPath }),
+    }))
     .sort((a, b) =>
       a.slug < b.slug ? -1
       : a.slug > b.slug ? 1
       : 0,
     );
 
-  const seen = new Map();
+  const seenNames = new Map();
+  const seenSlugs = new Map();
   for (const check of checks) {
-    const existing = seen.get(check.name);
-    if (existing !== undefined) {
-      throw new Error(`duplicate check name "${check.name}" in ${existing} and ${check.path}`);
+    const existingName = seenNames.get(check.name);
+    if (existingName !== undefined) {
+      throw new Error(`duplicate check name "${check.name}" in ${existingName} and ${check.path}`);
     }
-    seen.set(check.name, check.path);
+    seenNames.set(check.name, check.path);
+
+    const existingSlug = seenSlugs.get(check.slug);
+    if (existingSlug !== undefined) {
+      throw new Error(`duplicate check slug "${check.slug}" in ${existingSlug} and ${check.path}`);
+    }
+    seenSlugs.set(check.slug, check.path);
   }
 
   // `body` is read from disk by the runner, not carried through the matrix --

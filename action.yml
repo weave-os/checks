@@ -38,6 +38,9 @@ inputs:
   checks-dir:
     description: Directory of check files, relative to the repository root.
     default: .weave-checks
+  use-default-checks:
+    description: Also run this package's starter checks alongside checks-dir.
+    default: "false"
   doc-files:
     description: Comma-separated Markdown files in checks-dir that are documentation, not checks.
     default: README.md
@@ -125,7 +128,7 @@ runs:
       run: |
         rm -rf "${ACTION_PATH}"
         mkdir -p "${ACTION_PATH}"
-        cp -R "${SOURCE_PATH}/bin" "${SOURCE_PATH}/src" "${ACTION_PATH}/"
+        cp -R "${SOURCE_PATH}/bin" "${SOURCE_PATH}/src" "${SOURCE_PATH}/starter-checks" "${ACTION_PATH}/"
 
     # First, so nothing below can act as anything but the Weave Checks App. A
     # failure here stops the job before any check run exists: there is no
@@ -191,6 +194,8 @@ runs:
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         WEAVE_CHECKS_DIR: ${{ inputs.checks-dir }}
+        WEAVE_CHECKS_USE_DEFAULT_CHECKS: ${{ inputs.use-default-checks }}
+        WEAVE_CHECKS_STARTER_DIR: ${{ runner.temp }}/weave-checks-action/starter-checks
         WEAVE_CHECKS_DOC_FILES: ${{ inputs.doc-files }}
         WEAVE_CHECKS_PROVIDER: ${{ inputs.provider }}
         WEAVE_CHECKS_DIFF_BASE: ${{ inputs.diff-base }}

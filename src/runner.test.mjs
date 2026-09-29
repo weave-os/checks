@@ -598,6 +598,23 @@ describe("promptFor", () => {
     assert.ok(!prompt.includes("Do NOT repeat a finding"));
   });
 
+  it("reads criteria from a bundled source path when provided", () => {
+    const space = workspace();
+    const criteriaPath = path.join(space.root, "starter-check.md");
+    writeFileSync(criteriaPath, "Bundled starter criteria.\n");
+
+    const prompt = promptFor(
+      { ...CHECK, criteriaPath },
+      {
+        repoDir: space.repoDir,
+        diff: DIFF,
+        stat: STAT,
+      },
+    );
+
+    assert.match(prompt, /Bundled starter criteria/);
+  });
+
   it("names the check with the configured product name", () => {
     const space = workspace();
     const prompt = promptFor(CHECK, {

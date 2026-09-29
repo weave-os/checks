@@ -465,7 +465,7 @@ export async function runWorker(config, deps = {}) {
   }
 
   function resolutionPromptFor(check, openThreads) {
-    const criteria = readFileSync(path.join(REPO_DIR, check.path), "utf8");
+    const criteria = readFileSync(check.criteriaPath ?? path.join(REPO_DIR, check.path), "utf8");
     return [
       `You are resolving previously-flagged findings for the ${BRANDING.productName} "${check.name}" on a pull request.`,
       "",

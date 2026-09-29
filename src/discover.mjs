@@ -14,34 +14,84 @@ import { WEAVE_POLICY, buildMatrix, isCheckFile } from "./parse.mjs";
 
 export const DEFAULT_CHECKS_DIR = ".weave-checks";
 
-// Reads and validates every check in `checksDir`, resolved against `repoDir`.
-// `checksDir` is recorded in each entry's `path` as given, so a repo-relative
-// directory yields repo-relative paths the runner can join onto the repo root.
-export function discoverChecks(checksDir, { repoDir = ".", policy = WEAVE_POLICY } = {}) {
-  const dir = path.resolve(repoDir, checksDir);
+function checkFiles(
+  checksDir,
+  { repoDir, sourceDir, policy = WEAVE_POLICY, allowMissing = false } = {},
+) {
+  const dir = sourceDir ?? path.resolve(repoDir, checksDir);
   let entries;
   try {
     entries = fs.readdirSync(dir);
   } catch (err) {
+    if (allowMissing && err.code === "ENOENT") return [];
     throw new Error(`failed to read ${checksDir}: ${err.message}`);
   }
-  const files = entries
+  return entries
     .filter(name => isCheckFile(name, policy.docFiles))
     .sort()
     .map(name => ({
       path: path.posix.join(checksDir.split(path.sep).join("/"), name),
       text: fs.readFileSync(path.join(dir, name), "utf8"),
+      ...(sourceDir === undefined ? {} : { criteriaPath: path.join(dir, name) }),
     }));
-  const matrix = buildMatrix(files, policy);
-  if (matrix.length === 0) {
+}
+
+// Reads and validates every check in `checksDir`, resolved against `repoDir`.
+// `checksDir` is recorded in each entry's `path` as given, so a repo-relative
+// directory yields repo-relative paths the runner can join onto the repo root.
+export function discoverChecks(
+  checksDir,
+  { repoDir = ".", policy = WEAVE_POLICY, allowEmpty = false, sourceDir } = {},
+) {
+  const matrix = buildMatrix(
+    checkFiles(checksDir, { repoDir, sourceDir, policy, allowMissing: allowEmpty }),
+    policy,
+  );
+  if (matrix.length === 0 && !allowEmpty) {
     throw new Error(`no checks found in ${checksDir}`);
   }
   return matrix;
 }
 
+// Adds this package's starter set to the checks in the caller's directory.
+// The bundled files live beside the staged action, not in the checked-out
+// caller repository, so their source paths travel with the matrix for the
+// runner to read later.
+export function discoverChecksWithDefaults(
+  checksDir,
+  { repoDir = ".", policy = WEAVE_POLICY, useDefaultChecks = false, starterChecksDir } = {},
+) {
+  const files = checkFiles(checksDir, {
+    repoDir,
+    policy,
+    allowMissing: useDefaultChecks,
+  });
+  if (useDefaultChecks) {
+    if (!starterChecksDir) {
+      throw new Error("use-default-checks requires the bundled starter-checks directory");
+    }
+    files.push(
+      ...checkFiles("starter-checks", {
+        repoDir,
+        sourceDir: starterChecksDir,
+        policy,
+      }),
+    );
+  }
+
+  const matrix = buildMatrix(files, policy);
+  if (matrix.length === 0) {
+    throw new Error(
+      `no checks found in ${checksDir}${useDefaultChecks ? " or starter-checks" : ""}`,
+    );
+  }
+  return matrix;
+}
+
 // One human-readable line per check, shared by the script below and the CLI.
-export function describeEntry(entry) {
-  return `${entry.slug}: "${entry.name}" (intelligence ${entry.intelligence} → ${entry.model})`;
+export function describeEntry(entry, provider = "anthropic") {
+  const model = provider === "anthropic" ? ` → ${entry.model}` : "";
+  return `${entry.slug}: "${entry.name}" (intelligence ${entry.intelligence}${model})`;
 }
 
 function main() {
@@ -53,8 +103,9 @@ function main() {
     console.error(`check discovery failed: ${err.message}`);
     process.exit(1);
   }
+  const provider = process.env.WEAVE_CHECKS_PROVIDER || "anthropic";
   for (const entry of matrix) {
-    console.error(`discovered ${describeEntry(entry)}`);
+    console.error(`discovered ${describeEntry(entry, provider)}`);
   }
   const output = [`matrix=${JSON.stringify({ check: matrix })}`, `count=${matrix.length}`].join(
     "\n",
