@@ -194,7 +194,7 @@ Then immediately configure the trusted publisher in npmjs.com → `@weave-os/che
 - Provider: GitHub Actions
 - Organization: `weave-os`
 - Repository: `checks`
-- Workflow filename: `publish_npm.yml`
+- Workflow filename: `publish-npm.yml`
 - Allow direct publishing with `npm publish` (the workflow does not use staged publishing)
 
 Do not push a `checks-v<version>` tag for the version published manually; the workflow would correctly reject trying to publish that immutable version again. The manual bootstrap will not carry GitHub Actions provenance; subsequent tagged releases will. Revoke any temporary npm token after the bootstrap. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for current requirements.
