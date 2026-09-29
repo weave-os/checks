@@ -115,9 +115,8 @@ runs:
         # repository is not checked out yet.
         package-manager-cache: false
 
-    # The checkout below empties the workspace, and the reusable workflow runs
-    # this action from a copy inside it. Every later step runs a staged copy
-    # outside the workspace instead.
+    # Keep the action's own scripts outside the PR checkout, which lives in a
+    # sibling directory below. The CLI and agents operate on that checkout.
     - name: Stage the action's scripts
       shell: bash
       env:
@@ -164,6 +163,7 @@ runs:
       if: inputs.checkout == 'true'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        path: .weave-checks-repo
         ref: ${{ github.sha }}
         fetch-depth: 2
         # As the App, so the job's own token needs no contents permission.
@@ -185,7 +185,7 @@ runs:
       env:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
         WEAVE_CHECKS_APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        REPO_DIR: ${{ github.workspace }}
+        REPO_DIR: ${{ inputs.checkout == 'true' && format('{0}/.weave-checks-repo', github.workspace) || github.workspace }}
         WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -204,7 +204,7 @@ runs:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        REPO_DIR: ${{ github.workspace }}
+        REPO_DIR: ${{ inputs.checkout == 'true' && format('{0}/.weave-checks-repo', github.workspace) || github.workspace }}
         MATRIX_PATH: ${{ runner.temp }}/weave-checks/matrix.json
         DIFF_PATH: ${{ runner.temp }}/weave-checks/pr.diff
         STAT_PATH: ${{ runner.temp }}/weave-checks/pr.stat

@@ -170,24 +170,21 @@ jobs:
           '
 
       # Unauthenticated: the repository is public, and the job's own token has
-      # no contents permission to offer. `uses:` only takes a path inside the
-      # workspace, so the fetched copy outside it is copied in; the action's
-      # checkout replaces the workspace copy, and the step after it restores it.
+      # no contents permission to offer. `uses:` needs a path inside the
+      # workspace; the action checks out the PR into a sibling directory, so
+      # this definition remains available for the runner's post steps.
       - name: Fetch the Weave Checks action
-        id: action
         shell: bash
         env:
           SERVER_URL: ${{ github.server_url }}
           REPOSITORY: ${{ steps.workflow.outputs.repository }}
           SHA: ${{ steps.workflow.outputs.sha }}
-          SOURCE_DIR: ${{ runner.temp }}/weave-checks-action-source
           ACTION_DIR: ${{ github.workspace }}/.weave-checks-action
         run: |
-          rm -rf "${SOURCE_DIR}" "${ACTION_DIR}"
-          git init --quiet "${SOURCE_DIR}"
-          git -C "${SOURCE_DIR}" fetch --quiet --depth 1 --no-tags "${SERVER_URL}/${REPOSITORY}.git" "${SHA}"
-          git -C "${SOURCE_DIR}" checkout --quiet --detach FETCH_HEAD
-          cp -R "${SOURCE_DIR}" "${ACTION_DIR}"
+          rm -rf "${ACTION_DIR}"
+          git init --quiet "${ACTION_DIR}"
+          git -C "${ACTION_DIR}" fetch --quiet --depth 1 --no-tags "${SERVER_URL}/${REPOSITORY}.git" "${SHA}"
+          git -C "${ACTION_DIR}" checkout --quiet --detach FETCH_HEAD
 
       - name: Run Weave Checks
         id: checks
@@ -206,16 +203,3 @@ jobs:
           claude-code-version: ${{ inputs.claude-code-version }}
           fail-on-findings: ${{ inputs.fail-on-findings }}
           upload-diagnostics: ${{ inputs.upload-diagnostics }}
-
-      # The runner reloads the action's definition from ./.weave-checks-action
-      # to run its post steps (setup-node's and checkout's) after the last step,
-      # and the action's checkout deleted it.
-      - name: Restore the Weave Checks action for its post steps
-        if: always() && steps.action.outcome == 'success'
-        shell: bash
-        env:
-          SOURCE_DIR: ${{ runner.temp }}/weave-checks-action-source
-          ACTION_DIR: ${{ github.workspace }}/.weave-checks-action
-        run: |
-          rm -rf "${ACTION_DIR}"
-          cp -R "${SOURCE_DIR}" "${ACTION_DIR}"
