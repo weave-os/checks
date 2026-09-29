@@ -37,12 +37,12 @@ function jsonResponse(status, body, headers = {}) {
 describe("routerEnvironment", () => {
   it("points ANTHROPIC_BASE_URL at the router and carries the key and cluster in custom headers", () => {
     const env = routerEnvironment(ROUTER_KEY, "low");
-    assert.equal(env.ANTHROPIC_BASE_URL, "https://router.workweave.ai");
+    assert.equal(env.ANTHROPIC_BASE_URL, "https://router.weaveos.com");
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Router-Key: rk_test/);
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Force-Cluster: low/);
     assert.match(
       env.ANTHROPIC_CUSTOM_HEADERS,
-      /X-Weave-User-Email: weave-checks@workweave\.ai/,
+      /X-Weave-User-Email: weave-checks@weaveos\.com/,
     );
     // A real Anthropic key here would put traffic on per-API billing instead
     // of the router's own accounting -- assert it's the placeholder, not a
@@ -344,7 +344,7 @@ describe("weaveRouterProvider", () => {
     });
     assert.equal(cost, 1.5);
     assert.equal(error, null);
-    assert.match(fetchFn.urls[0], /^https:\/\/app\.workweave\.ai\/api\/v1\/router\/sessions\//);
+    assert.match(fetchFn.urls[0], /^https:\/\/app\.weaveos\.com\/api\/v1\/router\/sessions\//);
   });
 
   it("requires both keys", () => {

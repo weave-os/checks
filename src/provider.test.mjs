@@ -92,7 +92,7 @@ describe("createProvider", () => {
       createProvider(PROVIDER.WEAVE_ROUTER, { env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" } }),
     ];
     for (const provider of providers) {
-      for (const name of ["WEAVE_CHECKS_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "WEAVE_API_KEY", "WEAVE_ROUTER_KEY", "WEAVE_CHECKS_ANTHROPIC_API_KEY"]) {
+      for (const name of ["WEAVE_CHECKS_APP_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "WEAVE_API_KEY", "WEAVE_ROUTER_KEY", "WEAVE_CHECKS_ANTHROPIC_API_KEY"]) {
         assert.ok(provider.dropEnv.includes(name), `${provider.id} must drop ${name}`);
       }
     }

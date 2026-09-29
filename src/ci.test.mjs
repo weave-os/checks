@@ -165,8 +165,9 @@ describe("report", () => {
 });
 
 describe("permissionHint", () => {
-  it("explains a 403 in terms of permissions and forks", () => {
-    assert.match(permissionHint(new GitHubError("x", 403)), /checks: write.*forks/s);
+  it("points a 403 at the Weave Checks App installation, not the workflow token", () => {
+    assert.match(permissionHint(new GitHubError("x", 403)), /Weave Checks App needs Checks and Pull requests write/);
+    assert.doesNotMatch(permissionHint(new GitHubError("x", 403)), /GITHUB_TOKEN|permissions:/);
     assert.equal(permissionHint(new GitHubError("x", 500)), "");
     assert.equal(permissionHint(new Error("x")), "");
   });

@@ -7,6 +7,11 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 
+import {
+  exchangeForAppToken,
+  requestOidcToken,
+  revokeAppToken,
+} from "../src/apptoken.mjs";
 import { brandingFromEnv } from "../src/branding.mjs";
 import { closeAggregate, createAggregate, report, writeOutputs, writeStepSummary } from "../src/ci.mjs";
 import { DEFAULT_CHECKS_DIR, describeEntry, discoverChecks } from "../src/discover.mjs";
@@ -212,6 +217,40 @@ ${POLICY_HELP}
     },
   },
 
+  // Mints the Weave Checks App installation token every later step uses, and
+  // masks it before it can reach any log.
+  "mint-token": {
+    internal: true,
+    async run() {
+      const env = process.env;
+      const oidcToken = await requestOidcToken({ env });
+      const { token, repository } = await exchangeForAppToken({ oidcToken });
+      process.stdout.write(`::add-mask::${token}\n`);
+      if (repository && env.GITHUB_REPOSITORY && repository !== env.GITHUB_REPOSITORY) {
+        throw new Error(`Weave issued a token for ${repository}, not ${env.GITHUB_REPOSITORY}`);
+      }
+      writeOutputs(env.GITHUB_OUTPUT, { token });
+      console.error(`Authenticated as the Weave Checks GitHub App for ${repository ?? env.GITHUB_REPOSITORY}.`);
+    },
+  },
+
+  "revoke-token": {
+    internal: true,
+    async run() {
+      const env = process.env;
+      if (!env.WEAVE_CHECKS_APP_TOKEN) return;
+      const outcome = await revokeAppToken({
+        token: env.WEAVE_CHECKS_APP_TOKEN,
+        apiUrl: env.GITHUB_API_URL || "https://api.github.com",
+      });
+      console.error(
+        outcome.revoked
+          ? "Revoked the Weave Checks App token."
+          : `Could not revoke the Weave Checks App token (${outcome.error ?? `HTTP ${outcome.status}`}); it expires within an hour.`,
+      );
+    },
+  },
+
   "create-aggregate": {
     internal: true,
     async run() {
@@ -261,7 +300,7 @@ ${POLICY_HELP}
         aggregateName: brandingFromEnv(env).aggregateName,
         ignorePathspecs: pathspecs,
         diffBase: env.WEAVE_CHECKS_DIFF_BASE || undefined,
-        fetchEnv: fetchAuthEnv(env.GITHUB_SERVER_URL || "https://github.com", env.WEAVE_CHECKS_GITHUB_TOKEN),
+        fetchEnv: fetchAuthEnv(env.GITHUB_SERVER_URL || "https://github.com", env.WEAVE_CHECKS_APP_TOKEN),
       });
 
       const policy = policyForRun({
@@ -375,7 +414,7 @@ function requiredEnv(name) {
 function githubClient(env) {
   return createGitHubClient({
     apiUrl: env.GITHUB_API_URL || "https://api.github.com",
-    token: env.WEAVE_CHECKS_GITHUB_TOKEN,
+    token: env.WEAVE_CHECKS_APP_TOKEN,
   });
 }
 

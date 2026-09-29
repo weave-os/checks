@@ -22,8 +22,8 @@
 
 import { COORDINATOR_ONLY_ENV } from "./secrets.mjs";
 
-export const ROUTER_BASE_URL = "https://router.workweave.ai";
-export const WEAVE_API_BASE_URL = "https://app.workweave.ai/api/v1";
+export const ROUTER_BASE_URL = "https://router.weaveos.com";
+export const WEAVE_API_BASE_URL = "https://app.weaveos.com/api/v1";
 const USD_MICROS_PER_USD = 1_000_000;
 
 // Router telemetry is written asynchronously, so a session that has only just
@@ -81,7 +81,7 @@ function parseRetryAfterMs(headerValue) {
 // personal email so that router telemetry, cost rollups, and per-user
 // reports that group by this header attribute CI spend to the Weave Checks
 // service and not to whichever engineer happened to mint the router key.
-export const WEAVE_CHECKS_USER_EMAIL = "weave-checks@workweave.ai";
+export const WEAVE_CHECKS_USER_EMAIL = "weave-checks@weaveos.com";
 
 // Env for the Claude Code CLI. ANTHROPIC_BASE_URL moves the traffic; the router
 // key rides in its own header, exactly as the `npx @weave-os/router` installer

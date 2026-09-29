@@ -21,7 +21,7 @@ export function createGitHubClient({
   logFn = undefined,
 }) {
   if (typeof token !== "string" || token === "") {
-    throw new Error("a GitHub token is required (the action's github-token input)");
+    throw new Error("a Weave Checks App token is required (minted by the action's first step)");
   }
   const transport = {
     fetchFn,
@@ -61,14 +61,12 @@ export function createGitHubClient({
   };
 }
 
-// Explains the 403 every fork PR produces: `pull_request` runs from a fork
-// get a read-only GITHUB_TOKEN, and a composite action cannot grant itself
-// more. Appended to errors from write calls so the log says what to fix.
+// Explains a 403/404 on a write call. The token is the Weave Checks App's, so
+// the fix is on the App installation, never the workflow's `permissions:`.
 export function permissionHint(error) {
   if (!(error instanceof GitHubError) || (error.status !== 403 && error.status !== 404)) return "";
   return (
-    " -- the token needs `checks: write` and `pull-requests: write` (grant them in the calling" +
-    " workflow's `permissions:`). Pull requests from forks get a read-only GITHUB_TOKEN under" +
-    " `pull_request`; skip them with an `if:` on the job."
+    " -- the Weave Checks App needs Checks and Pull requests write access on this repository." +
+    " If its permissions changed, an organization owner must approve the update on the installation."
   );
 }

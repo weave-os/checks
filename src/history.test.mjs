@@ -15,6 +15,7 @@ import {
   formatHistorySection,
   formatMarker,
   formatResolutionSection,
+  isSettled,
   markerCodec,
   reviewsToDismiss,
   reviewsToHide,
@@ -217,6 +218,38 @@ describe("threadsForCheck", () => {
     ];
     const threads = threadsForCheck(nodes, "anti-slop");
     assert.deepEqual(threads.map((t) => t.threadId), ["T1"]);
+  });
+
+  // GitHub can refuse resolveReviewThread (it needs Contents write) after the
+  // audit reply is already posted. That reply is the judge's final word.
+  it("counts a thread this check already replied to as resolved as settled", () => {
+    const reply = (body) => {
+      const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+      node.comments.totalCount = 2;
+      node.latest = { nodes: [{ body }] };
+      return node;
+    };
+    const [replied] = threadsForCheck([reply(appendMarker("**Resolved by Weave Check / Anti Slop.**\n\nFixed.", "anti-slop"))], "anti-slop");
+    assert.equal(replied.isResolved, false);
+    assert.equal(replied.resolutionReplied, true);
+    assert.equal(isSettled(replied), true);
+
+    // A human reply, another check's resolution, or no reply: still open.
+    for (const body of ["Please fix this.", appendMarker("**Resolved by Weave Check / Other.**", "other-check")]) {
+      const [open] = threadsForCheck([reply(body)], "anti-slop");
+      assert.equal(isSettled(open), false, body);
+    }
+    const [unreplied] = threadsForCheck([threadNode({ id: "T2", isResolved: false, path: "a.go", line: 1, slug: "anti-slop", reviewId: 1 })], "anti-slop");
+    assert.equal(isSettled(unreplied), false);
+  });
+
+  // A thread with only its opening comment has that comment as `latest` too;
+  // an opening comment that happens to start with the prefix is not a reply.
+  it("does not treat the opening comment as a resolution reply", () => {
+    const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+    node.comments.totalCount = 1;
+    node.latest = { nodes: [{ body: appendMarker("**Resolved by nobody.**", "anti-slop") }] };
+    assert.equal(isSettled(threadsForCheck([node], "anti-slop")[0]), false);
   });
 
   it("strips the marker from the surfaced comment text", () => {

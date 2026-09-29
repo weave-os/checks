@@ -9,17 +9,20 @@ concurrency:
   group: checks-self-check-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# The action acts only as the Weave Checks App: the job's own token needs no
+# write access. id-token lets the action prove to Weave which repository and
+# workflow is asking before Weave issues an App installation token.
 permissions:
   contents: read
-  checks: write
-  pull-requests: write
+  id-token: write
 
 jobs:
   self-check:
     name: Weave Checks dogfood
-    # pull_request from a fork has a read-only GITHUB_TOKEN and no repository
-    # secrets. Never use pull_request_target to get write access to fork code.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Keep dogfooding disabled until the OIDC exchange endpoint is deployed
+    # and verified; the App-only action intentionally has no bot fallback.
+    # Fork PRs also receive no OIDC token. Never use pull_request_target.
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.WEAVE_CHECKS_TOKEN_EXCHANGE_READY == 'true'
     runs-on: ubuntu-latest
     steps:
       # This checkout makes the local composite action available as ./.
@@ -54,7 +57,6 @@ jobs:
         if: steps.credentials.outputs.ready == 'true'
         uses: ./
         with:
-          github-token: ${{ github.token }}
           provider: weave-router
           weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
           weave-api-key: ${{ secrets.WEAVE_API_KEY }}

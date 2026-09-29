@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_TOKEN_EXCHANGE_URL } from "./apptoken.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ACTION = readFileSync(path.join(ROOT, "action.yml"), "utf8");
@@ -119,11 +120,20 @@ describe("action.yml", () => {
     }
   });
 
-  it("documents caller-owned permissions, token/secrets passing, and fork limits", () => {
+  it("documents App installation, OIDC permissions, secrets passing, and fork limits", () => {
     const readme = readFileSync(path.join(ROOT, "README.md"), "utf8");
-    for (const phrase of ["cannot grant GitHub permissions", "cannot read the caller's secrets", "checks: write", "pull-requests: write", "read-only access", "pull_request_target"]) {
+    for (const phrase of [
+      "github.com/apps/weave-checks",
+      "id-token: write",
+      "never posts as `github-actions[bot]`",
+      "Composite actions cannot read your secrets",
+      "Forks never receive OIDC tokens",
+      "pull_request_target",
+      "changes the workflow file",
+    ]) {
       assert.ok(readme.includes(phrase), `README should explain ${phrase}`);
     }
+    assert.doesNotMatch(readme, /github-token:|secrets\.GITHUB_TOKEN/);
     assert.match(readme, /upload-diagnostics.*false/s);
   });
 
@@ -132,6 +142,9 @@ describe("action.yml", () => {
     assert.match(workflow, /pull_request:/);
     assert.doesNotMatch(workflow, /^  pull_request_target:/m);
     assert.match(workflow, /head\.repo\.full_name == github\.repository/);
+    assert.match(workflow, /vars\.WEAVE_CHECKS_TOKEN_EXCHANGE_READY == 'true'/);
+    assert.match(workflow, /id-token: write/);
+    assert.doesNotMatch(workflow, /checks: write|pull-requests: write|github\.token/);
     assert.match(workflow, /secrets\.WEAVE_ROUTER_KEY/);
     assert.match(workflow, /secrets\.WEAVE_API_KEY/);
     assert.match(workflow, /provider: weave-router/);
@@ -150,6 +163,36 @@ describe("action.yml", () => {
     for (const uses of workflow.matchAll(/^\s+uses: (.+)$/gm)) {
       assert.match(uses[1], /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}/, uses[1]);
     }
+  });
+
+  // The product contract: check runs and reviews come from the Weave Checks
+  // App or not at all. No step may reach for the workflow's own token.
+  it("acts only as the Weave Checks App, never as github-actions[bot]", () => {
+    assert.doesNotMatch(ACTION, /github\.token|secrets\.GITHUB_TOKEN|inputs\.github-token/);
+    assert.equal(INPUTS.includes("github-token"), false);
+    const tokenLines = [...ACTION.matchAll(/WEAVE_CHECKS_APP_TOKEN: (.+)$/gm)].map((m) => m[1]);
+    assert.ok(tokenLines.length >= 5, "every GitHub-calling step sets the token");
+    for (const line of tokenLines) {
+      assert.equal(line, "${{ steps.app-token.outputs.token }}");
+    }
+  });
+
+  it("mints the App token before any GitHub call and revokes it last", () => {
+    const mint = step("Authenticate as the Weave Checks App");
+    assert.equal(mint.id, "app-token");
+    assert.equal(mint.if, null);
+    assert.match(mint.block, /cli\.mjs" mint-token/);
+    assert.equal(indexOf("Authenticate as the Weave Checks App"), 1);
+    assert.ok(indexOf("Authenticate as the Weave Checks App") < indexOf("Create aggregate check run"));
+    const revoke = step("Revoke the Weave Checks App token");
+    assert.equal(STEPS.at(-1).name, "Revoke the Weave Checks App token");
+    assert.match(revoke.if, /^always\(\) && steps\.app-token\.outputs\.token != ''$/);
+  });
+
+  it("has no input for substituting a different GitHub App/token exchange", () => {
+    assert.equal(INPUTS.includes("token-exchange-url"), false);
+    assert.equal(DEFAULT_TOKEN_EXCHANGE_URL, "https://app.weaveos.com/api/v1/checks/github-token");
+    assert.doesNotMatch(step("Authenticate as the Weave Checks App").block, /TOKEN_EXCHANGE_URL:/);
   });
 
   it("defaults to the generic provider and Weave branding", () => {

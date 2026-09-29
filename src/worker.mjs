@@ -66,7 +66,9 @@ import {
   extractThreadsPage,
   formatHistorySection,
   formatResolutionSection,
+  isSettled,
   markerCodec,
+  RESOLUTION_REPLY_PREFIX,
   REVIEW_THREADS_QUERY,
   reviewsToDismiss,
   reviewsToHide,
@@ -148,7 +150,7 @@ export function readWorkerConfig(env) {
   return {
     headSha: required("HEAD_SHA"),
     repoDir: required("REPO_DIR"),
-    token: required("WEAVE_CHECKS_GITHUB_TOKEN"),
+    token: required("WEAVE_CHECKS_APP_TOKEN"),
     tempDir: required("WEAVE_CHECKS_TEMP_DIR"),
     prNumber: required("PR_NUMBER"),
     summaryPath: required("SUMMARY_PATH"),
@@ -729,15 +731,23 @@ export async function runWorker(config, deps = {}) {
   // failure is recorded as a history error, not fatal to the check.
   async function applyResolutions(check, checkThreads, openThreads, judgment) {
     const historyErrors = [];
-    const openById = new Map(openThreads.map((t) => [t.threadId, t]));
+    const threadById = new Map(checkThreads.map((t) => [t.threadId, t]));
+    const openIds = new Set(openThreads.map((t) => t.threadId));
+    // GitHub may refuse resolveReviewThread even after this check posted its
+    // audit reply. Re-attempt the mutation on every run, but never re-post the
+    // same reply or ask the judge the same question again.
+    const alreadyReplied = checkThreads
+      .filter((thread) => thread.resolutionReplied && !thread.isResolved)
+      .map((thread) => ({ threadId: thread.threadId, evidence: "Previously judged resolved by this check." }));
+    const resolutions = [...judgment.resolutions, ...alreadyReplied];
     // Track only IDs whose resolveThread actually succeeded. reviewsToDismiss
-    // honors this set when deciding which reviews are fully addressed, so a
-    // resolve failure must keep its parent review open -- otherwise a rejected
-    // mutation silently hides an unresolved blocking review. resolvedCount
-    // reports the same set so the summary and the dismiss decision agree.
+    // and reviewsToHide honor this set, so a failed mutation keeps the parent
+    // review visible. `resolvedOpenIds` counts only findings judged this run;
+    // an already-replied thread is a retry, not a new still-open finding.
     const resolvedIds = [];
+    const resolvedOpenIds = [];
 
-    for (const { threadId, evidence } of judgment.resolutions) {
+    for (const { threadId, evidence } of resolutions) {
       // The caller already validated HEAD wasn't stale before applyResolutions
       // was entered, but the resolution judge above may have produced many
       // threads and each reply/resolve mutation is a live HTTP call -- a push
@@ -748,11 +758,12 @@ export async function runWorker(config, deps = {}) {
       // resolution) is bounded by the same per-check budget as the agent
       // calls and only fires when the loop runs.
       if (await threadSafeStale()) break;
-      const thread = openById.get(threadId);
+      const thread = threadById.get(threadId);
       // Comment-less threads can't receive an audit reply but still resolve.
+      // A retry target already has its audit reply, so don't post a duplicate.
       // Best-effort: a reply failure is recorded but the resolve proceeds,
       // since an unexplained resolution is better than none.
-      if (thread?.commentId != null) {
+      if (thread?.commentId != null && !thread.resolutionReplied) {
         await attemptHistory(
           () => postResolutionReply(check, thread, evidence),
           `reply ${thread.commentId}`,
@@ -768,6 +779,7 @@ export async function runWorker(config, deps = {}) {
         )
       ) {
         resolvedIds.push(threadId);
+        if (openIds.has(threadId)) resolvedOpenIds.push(threadId);
       }
     }
 
@@ -820,6 +832,7 @@ export async function runWorker(config, deps = {}) {
 
     return {
       resolvedCount: resolvedIds.length,
+      resolvedOpenCount: resolvedOpenIds.length,
       dismissedCount: dismissedThisRun.length,
       hiddenCount,
       historyErrors,
@@ -860,7 +873,7 @@ export async function runWorker(config, deps = {}) {
       `repos/${REPOSITORY}/pulls/${PR_NUMBER}/comments/${thread.commentId}/replies`,
       {
         body: MARKERS.append(
-          `**Resolved by ${childCheckRunName(BRANDING, check)}.**\n\n${evidence}`,
+          `${RESOLUTION_REPLY_PREFIX}${childCheckRunName(BRANDING, check)}.**\n\n${evidence}`,
           check.slug,
         ),
       },
@@ -1202,7 +1215,7 @@ export async function runWorker(config, deps = {}) {
     state.note = `${check.description} Agent is reviewing changed lines.`;
 
     const checkThreads = threadsForCheck(rawThreadNodes, check.slug, MARKERS);
-    const openThreads = checkThreads.filter((thread) => !thread.isResolved);
+    const openThreads = checkThreads.filter((thread) => !isSettled(thread));
 
     // Per-phase transcript evidence for the check-run summary's collapsible
     // section. Each entry is { phase, sessions:[{label,sessionId,text}] };
@@ -1338,7 +1351,7 @@ export async function runWorker(config, deps = {}) {
       result = {
         ...result,
         ...resolutionOutcome,
-        stillOpenCount: openThreads.length - resolutionOutcome.resolvedCount,
+        stillOpenCount: openThreads.length - resolutionOutcome.resolvedOpenCount,
       };
       // A thread the resolution judge left open counts as a live issue even
       // when this run's own review passed or errored -- otherwise a check could

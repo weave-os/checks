@@ -18,31 +18,38 @@ on:
 
 permissions:
   contents: read
-  checks: write
-  pull-requests: write
+  id-token: write
 
 jobs:
   checks:
-    # A pull_request job from a fork receives a read-only GITHUB_TOKEN. This
-    # example skips forks; adopters should choose and document their own safe
-    # fork policy. Never switch to pull_request_target to work around it.
+    # Pull requests from forks get no OIDC token, so the action cannot
+    # authenticate for them. Never switch to pull_request_target to work around it.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Run Weave Checks
         uses: weave-os/checks@v1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           provider: anthropic
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           checks-dir: .weave-checks
 ```
 
-### Permissions, tokens, and forks
+### Setup: install the Weave Checks App
 
-A composite action **cannot grant GitHub permissions** and **cannot read the caller's secrets unless the caller passes them in**. The workflow job must grant `checks: write` to create and update check runs, `pull-requests: write` to post inline review comments and manage review threads, and `contents: read` to check out the repository. Pass a token explicitly using the `github-token` input; its default is `${{ github.token }}`. Add permission and explicitly pass any provider credentials the selected mode needs.
+Check runs, reviews, and replies always come from the **Weave Checks** GitHub App. The action never posts as `github-actions[bot]`, and you never handle an App key.
 
-For `pull_request` events from forks, GitHub gives `GITHUB_TOKEN` read-only access and withholds repository secrets. A write failure is expected in that case. The example skips fork PRs; maintainers who choose a different fork policy must weigh access against the risk of exposing credentials to untrusted changes. **Do not use `pull_request_target`** to give an agent access to secrets while it reads fork-controlled code.
+1. **Install the App.** Open [github.com/apps/weave-checks](https://github.com/apps/weave-checks/installations/new), choose your organization, and select the repositories that will run Weave Checks. The App needs Checks and Pull requests write access for check runs and reviews, plus Contents write so it can resolve review threads. GitHub gates `resolveReviewThread` behind Contents write even though it changes no repository files. The action uses a repository-scoped installation token and never asks Claude to use it, but the token itself has permission to write repository contents.
+2. **Grant `id-token: write`** in the workflow, as in the example above. The job's own `GITHUB_TOKEN` needs no write access; `contents: read` is only for checkout.
+3. **Pass your model provider credentials** as inputs (see [Provider setup](#provider-setup)). Composite actions cannot read your secrets unless you pass them in.
+
+**How the action authenticates:** at the start of the job it requests a GitHub OIDC token with the audience `weave-checks`. That token is GitHub's signed statement of which repository and workflow is running. The action sends it to Weave, which checks it and returns a Weave Checks App installation token. Weave takes the repository from the OIDC token's signed claims, not from anything in the request. The returned token is scoped to that one repository with the App's review permissions, and it expires within an hour. The action uses it for every GitHub call and revokes it when the job finishes.
+
+**If authentication fails, the job stops before creating any check run,** with one of these explanations:
+
+- **`id-token: write` is missing**, or the pull request comes from a fork. Forks never receive OIDC tokens; skip them with the `if:` shown above. **Do not use `pull_request_target`** to work around this, since it would give an agent reading fork-controlled code your secrets.
+- **The App is not installed** on the repository's owner, or not on this repository. Add it from the App's installation settings.
+- **The pull request changes the workflow file that runs Weave Checks.** Weave refuses to issue a token for it, so a pull request cannot rewrite the job that holds the App token. Checks run normally again once the change merges.
 
 ### Provider setup
 
@@ -51,7 +58,6 @@ The action defaults to `provider: anthropic`. It supports either an Anthropic AP
 ```yaml
       - uses: weave-os/checks@v1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           provider: anthropic
           provider-env: |
             ANTHROPIC_BASE_URL=https://llm-gateway.example.com
@@ -65,7 +71,6 @@ For **Weave Router**, set repository or organization secrets named `WEAVE_ROUTER
 ```yaml
       - uses: weave-os/checks@v1
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           provider: weave-router
           weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
           weave-api-key: ${{ secrets.WEAVE_API_KEY }}
@@ -141,7 +146,6 @@ npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format 
 
 | Input | Default | Purpose |
 | --- | --- | --- |
-| `github-token` | `${{ github.token }}` | Token for check runs and pull-request reviews; caller must grant permissions. |
 | `provider` | `anthropic` | `anthropic` (direct/compatible endpoint) or `weave-router`. |
 | `anthropic-api-key` / `claude-code-oauth-token` | empty | Anthropic credentials; provide one if the selected endpoint needs them. |
 | `provider-env` | empty | Extra `KEY=VALUE` environment for Anthropic-compatible providers. |

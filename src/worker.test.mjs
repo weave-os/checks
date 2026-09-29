@@ -49,7 +49,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
     env: {
       HEAD_SHA,
       REPO_DIR: repoDir,
-      WEAVE_CHECKS_GITHUB_TOKEN: "ghs_test",
+      WEAVE_CHECKS_APP_TOKEN: "ghs_test",
       WEAVE_CHECKS_TEMP_DIR: path.join(root, "temp"),
       PR_NUMBER: "7",
       SUMMARY_PATH: path.join(root, "summary.md"),
@@ -82,7 +82,7 @@ function reply(status, body) {
 // A GitHub stand-in that records every call and answers the handful of
 // endpoints the worker uses. `threads` are the raw review-thread nodes the
 // GraphQL history query returns; `failMaster` makes every aggregate PATCH 500.
-function fakeGitHub({ threads = [], failMaster = false, liveHead = HEAD_SHA } = {}) {
+function fakeGitHub({ threads = [], failMaster = false, failResolve = false, liveHead = HEAD_SHA } = {}) {
   const calls = [];
   let nextId = 2000;
   const fetchFn = async (url, init = {}) => {
@@ -95,6 +95,9 @@ function fakeGitHub({ threads = [], failMaster = false, liveHead = HEAD_SHA } = 
         return reply(200, {
           data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: threads } } } },
         });
+      }
+      if (body.query.includes("resolveReviewThread") && failResolve) {
+        return reply(200, { data: null, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] });
       }
       return reply(200, { data: {} });
     }
@@ -324,6 +327,54 @@ describe("runWorker", () => {
     assert.match(replyCall.body.body, /^\*\*Resolved by Weave Check \/ First Check\.\*\*\n\nRenamed to uno\./);
     assert.match(replyCall.body.body, /<!-- acme-review:first-check -->$/);
     assert.ok(github.calls.some((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")));
+  });
+
+  // Found live on this repo's own PR: GitHub refused resolveReviewThread, so
+  // every later push re-judged the same fixed finding and posted another reply.
+  // Retry the GitHub mutation, but don't repeat the judge or the reply.
+  it("retries resolving an already-replied thread and hides the parent after success", async () => {
+    const { env } = workerEnv();
+    const replied = openThread("first-check");
+    replied.comments.totalCount = 2;
+    replied.latest = { nodes: [{ body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check") }] };
+    const github = fakeGitHub({ threads: [replied] });
+
+    await run(env, github, async () => pass(), {
+      runAgent: async () => {
+        throw new Error("the resolution judge must not run for a thread with its audit reply");
+      },
+    });
+
+    assert.equal(github.calls.some((c) => c.route.endsWith("/replies")), false);
+    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")).length, 1);
+    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("minimizeComment")).length, 1);
+    assert.ok(
+      github.childPatches().some((c) => c.body.output.summary.includes("Resolved 1 previously-flagged thread")),
+      "expected the retried thread to resolve",
+    );
+    assert.equal(github.childPatches().every((c) => !/still open/.test(c.body.output.summary)), true);
+    assert.equal(github.childPatches().every((c) => c.body.conclusion === "success"), true);
+  });
+
+  it("keeps retrying an already-replied thread after GitHub refuses resolution", async () => {
+    const { env } = workerEnv();
+    const replied = openThread("first-check");
+    replied.comments.totalCount = 2;
+    replied.latest = { nodes: [{ body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check") }] };
+    const github = fakeGitHub({ threads: [replied], failResolve: true });
+
+    await run(env, github, async () => pass(), {
+      runAgent: async () => {
+        throw new Error("the resolution judge must not run again");
+      },
+    });
+
+    assert.equal(github.calls.some((c) => c.route.endsWith("/replies")), false);
+    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")).length, 1);
+    assert.equal(github.calls.some((c) => c.body?.query?.includes("minimizeComment")), false);
+    const first = github.childPatches().find((c) => c.body.output.summary.includes("Resource not accessible by integration"));
+    assert.ok(first);
+    assert.doesNotMatch(first.body.output.summary, /still open/);
   });
 
   it("skips the resolution judge when it is turned off, leaving the thread open", async () => {

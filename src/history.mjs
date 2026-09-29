@@ -61,6 +61,8 @@ export const extractMarkerSlug = DEFAULT_CODEC.extractSlug;
 // `pullRequestReview` also carries `id` (the GraphQL global id, used as the
 // subjectId for minimizeComment on the review summary) and `isMinimized`, so
 // a review that was already minimized on a prior run isn't re-minimized.
+// `latest` is the thread's newest comment, read to recognize a resolution
+// reply this check already posted (see resolutionAlreadyPosted).
 export const REVIEW_THREADS_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -75,11 +77,15 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String) {
           line
           originalLine
           comments(first: 1) {
+            totalCount
             nodes {
               databaseId
               body
               pullRequestReview { databaseId id state isMinimized }
             }
+          }
+          latest: comments(last: 1) {
+            nodes { body }
           }
         }
       }
@@ -107,6 +113,27 @@ export function extractThreadsPage(data) {
   return { nodes: connection.nodes ?? [], pageInfo };
 }
 
+// The audit reply the worker posts before resolving a thread opens with this.
+export const RESOLUTION_REPLY_PREFIX = "**Resolved by ";
+
+// True when the thread's newest reply is this check's own resolution reply:
+// the resolution judge already decided the finding was fixed, but resolving
+// the thread failed (GitHub gates resolveReviewThread behind Contents write).
+// Counting it as settled stops every later push from re-judging it, posting
+// another identical reply, and keeping the check flagged for a fixed issue.
+function resolutionAlreadyPosted(node, slug, codec) {
+  if ((node.comments?.totalCount ?? 0) < 2) return false;
+  const body = node.latest?.nodes?.[0]?.body;
+  return typeof body === "string" && body.startsWith(RESOLUTION_REPLY_PREFIX) && codec.extractSlug(body) === slug;
+}
+
+// Whether a thread no longer needs judging: resolved on GitHub, or judged
+// fixed with the audit reply already posted. Only the GitHub state drives
+// dismissing or hiding reviews; this drives "still open" and re-judging.
+export function isSettled(thread) {
+  return thread.isResolved || thread.resolutionReplied === true;
+}
+
 // Normalizes raw GraphQL thread nodes into the shape the rest of this module
 // (and worker.mjs) works with, keeping only threads this check itself opened
 // -- identified by the marker on the thread's first comment.
@@ -128,6 +155,7 @@ export function threadsForCheck(rawNodes, slug, codec = DEFAULT_CODEC) {
       reviewGraphqlId: review?.id ?? null,
       reviewIsMinimized: review?.isMinimized === true,
       isResolved: node.isResolved === true,
+      resolutionReplied: resolutionAlreadyPosted(node, slug, codec),
       isOutdated: node.isOutdated === true,
       commentId: opener.databaseId ?? null,
       path: node.path,
@@ -194,8 +222,8 @@ export function formatHistorySection(threads) {
   if (ordered.length <= MAX_HISTORY_THREADS) {
     visible = ordered;
   } else {
-    const openThreads = ordered.filter((t) => !t.isResolved);
-    const resolvedThreads = ordered.filter((t) => t.isResolved);
+    const openThreads = ordered.filter((t) => !isSettled(t));
+    const resolvedThreads = ordered.filter((t) => isSettled(t));
     const openCount = openThreads.length;
     if (openCount >= MAX_HISTORY_THREADS) {
       // Both branches of the cap can drop RESOLVED threads too: when open
@@ -226,16 +254,16 @@ export function formatHistorySection(threads) {
       // open threads), so the newest resolved findings can be among those
       // omitted and must not be characterized as "older".
       ? `(Showing only the most recent ${visible.length} of ${ordered.length} previously-flagged threads -- ${droppedOpenCount} older OPEN thread(s) and ${droppedResolvedCount} other resolved thread(s) are also omitted; the shown set may not be a complete duplicate-detection history.)\n`
-      : `(Showing the most recent ${visible.filter((t) => t.isResolved).length} resolved and all ${visible.filter((t) => !t.isResolved).length} open previously-flagged threads; the older ${droppedResolvedCount} resolved ones are omitted.)\n`
+      : `(Showing the most recent ${visible.filter((t) => isSettled(t)).length} resolved and all ${visible.filter((t) => !isSettled(t)).length} open previously-flagged threads; the older ${droppedResolvedCount} resolved ones are omitted.)\n`
     : "";
   return header + visible
     .map((t) => {
-      const resolvedNote = t.isResolved ? " (already resolved -- do not repeat this finding)" : "";
+      const resolvedNote = isSettled(t) ? " (already resolved -- do not repeat this finding)" : "";
       // Omit the truncation for OPEN threads -- the dedup judge depends on the
       // exact body to tell a new finding from an existing one. RESOLVED threads
       // are still capped at MAX_HISTORY_COMMENT_LENGTH so a single thread with
       // a giant ```suggestion block can't dominate the section.
-      const text = t.isResolved ? truncateForHistory(t.comment) : t.comment;
+      const text = isSettled(t) ? truncateForHistory(t.comment) : t.comment;
       return `- [id=${t.threadId}] ${t.path}:${t.line} -- ${text}${resolvedNote}`;
     })
     .join("\n");

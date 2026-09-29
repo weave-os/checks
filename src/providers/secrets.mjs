@@ -3,7 +3,7 @@
 // agent reads untrusted PR content, and anything in its environment is one
 // prompt injection away from ending up in a review comment.
 //
-//   WEAVE_CHECKS_GITHUB_TOKEN  -- the worker's GitHub token
+//   WEAVE_CHECKS_APP_TOKEN   -- the short-lived Weave Checks App installation token
 //   GITHUB_TOKEN, GH_TOKEN     -- the same, under the names tools look for
 //   WEAVE_CHECKS_ANTHROPIC_API_KEY, WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN
 //                              -- the action's credential inputs, which the
@@ -13,7 +13,7 @@
 //                              -- Weave Router's key (it rides in a header
 //                                 instead) and the cost-lookup key
 export const COORDINATOR_ONLY_ENV = Object.freeze([
-  "WEAVE_CHECKS_GITHUB_TOKEN",
+  "WEAVE_CHECKS_APP_TOKEN",
   "GITHUB_TOKEN",
   "GH_TOKEN",
   "WEAVE_CHECKS_ANTHROPIC_API_KEY",
