@@ -4,6 +4,21 @@
   "description": "Advisory, per-concern AI code review for pull requests, driven by Markdown check files.",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "weave-checks": "bin/cli.mjs"
+  },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "action.yml",
+    "bin/",
+    "src/**/*.mjs",
+    "!src/**/*.test.mjs",
+    "starter-checks/",
+    "NOTICE"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/weave-os/checks.git"
@@ -15,5 +30,12 @@
   },
   "scripts": {
     "test": "node --test src/*.test.mjs"
-  }
+  },
+  "keywords": [
+    "code-review",
+    "github-action",
+    "claude",
+    "ai",
+    "pull-request"
+  ]
 }

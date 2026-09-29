@@ -75,6 +75,7 @@ export function readConfig(env) {
       ? readFileSync(env.SCHEMA_PATH, "utf8")
       : JSON.stringify(RESULT_SCHEMA),
     parallel: positiveInteger(env.PARALLEL, DEFAULT_PARALLEL),
+    maxBudget: env.MAX_BUDGET || "2",
     // Only the selected provider's credentials are read: `inherit` and
     // `anthropic` need no Weave key, and `weave-router` fails here, before
     // any agent runs, if either of its two is missing.
@@ -141,6 +142,7 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
         // so that overlay is the only source of truth.
         provider: config.provider,
         productName: config.productName,
+        maxBudget: config.maxBudget ?? "2",
         settingSources: config.provider.id === PROVIDER.INHERIT ? null : "",
         settingsPath,
         dropEnv,

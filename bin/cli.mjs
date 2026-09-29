@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // weave-checks: the package's command-line entry point.
 //
+//   weave-checks run            Review the working tree's changes locally.
 //   weave-checks list           Validate and list the checks in a directory.
 //   weave-checks print-schema   Print the structured-output JSON schema.
 //
@@ -9,7 +10,9 @@
 //
 //   weave-checks create-aggregate | prepare | close-aggregate | report
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -18,15 +21,20 @@ import { brandingFromEnv } from "../src/branding.mjs";
 import { closeAggregate, createAggregate, report, writeOutputs, writeStepSummary } from "../src/ci.mjs";
 import { DEFAULT_CHECKS_DIR, describeEntry, discoverChecks } from "../src/discover.mjs";
 import { createGitHubClient, permissionHint } from "../src/github.mjs";
+import { gitLine } from "../src/git.mjs";
+import { DEFAULT_BASE, repoRoot, resolveDiffBase, writeRangeDiff, writeWorkingTreeDiff } from "../src/gitdiff.mjs";
 import { readIgnorePathspecs } from "../src/ignore.mjs";
+import { DEFAULT_LOCAL_PROVIDER, positiveInteger, runChecks } from "../src/local.mjs";
 import { parseBoolean, policyForRun, validateChecksDir } from "../src/options.mjs";
 import { DEDUP_SCHEMA, RESOLUTION_SCHEMA, RESULT_SCHEMA } from "../src/parse.mjs";
-import { fetchAuthEnv, preparePullRequest, verifyCheckout } from "../src/prepare.mjs";
-import { PROVIDER } from "../src/provider.mjs";
+import { fetchAuthEnv, preparePullRequest, resolveMergeBase, verifyCheckout } from "../src/prepare.mjs";
+import { PROVIDER, createProvider, parseProviderEnv } from "../src/provider.mjs";
+import { renderMarkdown, renderText } from "../src/render.mjs";
 
 const USAGE = `Usage: weave-checks <command> [options]
 
 Commands:
+  run           Review your changes (working tree vs. the merge base) locally
   list          Validate the checks in a directory and list them
   print-schema  Print the JSON schema an agent's review must match
 
@@ -67,6 +75,129 @@ function discoverFromOptions(values) {
 }
 
 const COMMANDS = {
+  run: {
+    help: `Usage: weave-checks run [options]
+
+Reviews the working tree -- staged, unstaged, and untracked changes, but not
+gitignored files -- against the merge base with --base, using the same prompts
+and verdict pipeline as the GitHub action. No GitHub state is read or written:
+there is no thread history, so nothing is deduplicated or resolved.
+
+${POLICY_HELP}
+  --base <ref>              Branch the change will merge into (default: ${DEFAULT_BASE}, or main without it)
+  --no-merge-base           Diff against --base itself instead of its merge base with HEAD
+  --github-merge-base <o/r> Resolve the merge base with GitHub's compare API (needs GITHUB_TOKEN
+                            and HEAD pushed); for shallow clones
+  --head <ref>              Review a committed range --base...<ref> instead of the working tree
+  --only <slugs>            Comma-separated checks to run
+  --format <fmt>            text | markdown | json (default: text)
+  --output <file>           Also write the JSON results here
+  --artifacts-dir <dir>     Keep prompts, transcripts, and results here (default: a temp dir)
+  --parallel <n>            Checks run at once (default: 4)
+  --max-budget <usd>        Per-check USD ceiling for the review (default: 2)
+  --no-fail                 Exit 0 even when a check flags findings
+
+Providers:
+  inherit        Your own Claude Code configuration, unchanged (default)
+  anthropic      ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN from the environment, plus
+                 WEAVE_CHECKS_PROVIDER_ENV (KEY=VALUE lines) for a gateway or Bedrock/Vertex
+  weave-router   WEAVE_ROUTER_KEY and WEAVE_API_KEY from the environment; Router-billed cost
+
+Exit status: 0 when nothing was flagged, 1 when a check flagged findings, 2 on
+usage errors. A neutral check (it could not reach a verdict) never fails the run.
+`,
+    options: {
+      ...POLICY_OPTIONS,
+      base: { type: "string", default: DEFAULT_BASE },
+      "no-merge-base": { type: "boolean", default: false },
+      "github-merge-base": { type: "string", default: "" },
+      head: { type: "string", default: "" },
+      only: { type: "string", default: "" },
+      format: { type: "string", default: "text" },
+      output: { type: "string", default: "" },
+      "artifacts-dir": { type: "string", default: "" },
+      parallel: { type: "string", default: "4" },
+      "max-budget": { type: "string", default: "2" },
+      "no-fail": { type: "boolean", default: false },
+    },
+    async run(values) {
+      if (!["text", "markdown", "json"].includes(values.format)) {
+        throw new UsageError(`--format must be text, markdown, or json, got ${JSON.stringify(values.format)}`);
+      }
+      if (!/^\d+(\.\d+)?$/.test(values["max-budget"]) || Number(values["max-budget"]) <= 0) {
+        throw new UsageError(`--max-budget must be a positive USD amount, got ${JSON.stringify(values["max-budget"])}`);
+      }
+      const repoDir = repoRoot(values["repo-dir"]);
+      const checksDir = validateChecksDir(values["checks-dir"]);
+      const providerName = values.provider || DEFAULT_LOCAL_PROVIDER;
+      // Built before any git work so a missing credential fails immediately.
+      const provider = createProvider(providerName, {
+        env: process.env,
+        providerEnv: parseProviderEnv(process.env.WEAVE_CHECKS_PROVIDER_ENV),
+      });
+      const matrix = selectChecks(discoverFromOptions({ ...values, "repo-dir": repoDir }), values.only);
+
+      if (spawnSync("claude", ["--version"], { stdio: "ignore" }).status !== 0) {
+        throw new UsageError("`claude` not found on PATH. Install Claude Code first: https://docs.claude.com/en/docs/claude-code");
+      }
+
+      const artifactsDir = values["artifacts-dir"]
+        ? path.resolve(values["artifacts-dir"])
+        : mkdtempSync(path.join(os.tmpdir(), "weave-checks-run-"));
+      mkdirSync(artifactsDir, { recursive: true });
+      const outputPath = values.output ? path.resolve(values.output) : path.join(artifactsDir, "results.json");
+      writeFileSync(path.join(artifactsDir, "matrix.json"), `${JSON.stringify({ check: matrix })}\n`);
+
+      const { pathspecs } = readIgnorePathspecs(path.join(repoDir, checksDir));
+      const base = await localDiffBase(repoDir, values);
+      const prepared = values.head
+        ? writeRangeDiff({ repoDir, base, head: values.head, outDir: artifactsDir, ignorePathspecs: pathspecs })
+        : writeWorkingTreeDiff({
+            repoDir,
+            base,
+            outDir: artifactsDir,
+            // A run must never review its own output (gitdiff.mjs).
+            excludePaths: [artifactsDir, outputPath],
+            ignorePathspecs: pathspecs,
+          });
+      if (prepared.diff.trim() === "") {
+        throw new UsageError(`no changes between ${base.slice(0, 12)} and ${values.head || "the working tree"} — nothing to check.`);
+      }
+
+      const parallel = positiveInteger(values.parallel, 4);
+      process.stderr.write(
+        `Weave Checks: ${matrix.length} check(s) against ${base.slice(0, 12)} (${parallel} at a time, provider ${provider.id})\n`,
+      );
+      const summary = await runChecks({
+        repoDir,
+        tempDir: artifactsDir,
+        checks: matrix,
+        diff: prepared.diff,
+        stat: prepared.stat,
+        schemaText: JSON.stringify(RESULT_SCHEMA),
+        parallel,
+        provider,
+        maxBudget: values["max-budget"],
+        settingsDir: null,
+      });
+      mkdirSync(path.dirname(outputPath), { recursive: true });
+      writeFileSync(outputPath, `${JSON.stringify(summary, null, 2)}\n`);
+
+      if (values.format === "json") {
+        process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      } else if (values.format === "markdown") {
+        process.stdout.write(renderMarkdown(summary));
+      } else {
+        process.stdout.write(renderText(summary, { color: process.stdout.isTTY === true && !process.env.NO_COLOR }));
+        process.stdout.write(`Artifacts: ${artifactsDir}\n`);
+      }
+      // Only a finding fails the run. A neutral outcome is an operational
+      // miss, and blocking a commit on one would train people to pass
+      // --no-fail by reflex.
+      if (summary.totals.flagged > 0 && !values["no-fail"]) process.exitCode = 1;
+    },
+  },
+
   list: {
     help: `Usage: weave-checks list [options]
 
@@ -220,6 +351,45 @@ ${POLICY_HELP}
   },
 };
 
+class UsageError extends Error {}
+
+function selectChecks(matrix, only) {
+  const slugs = only.split(",").map((slug) => slug.trim()).filter((slug) => slug !== "");
+  if (slugs.length === 0) return matrix;
+  const known = new Set(matrix.map((check) => check.slug));
+  const unknown = slugs.filter((slug) => !known.has(slug)).sort();
+  if (unknown.length > 0) {
+    throw new UsageError(`unknown check(s): ${unknown.join(", ")}\navailable: ${[...known].sort().join(", ")}`);
+  }
+  const selected = new Set(slugs);
+  return matrix.filter((check) => selected.has(check.slug));
+}
+
+async function localDiffBase(repoDir, values) {
+  if (!values["github-merge-base"]) {
+    return resolveDiffBase({
+      repoDir,
+      base: values.base,
+      useMergeBase: !values["no-merge-base"],
+      head: values.head || "HEAD",
+    });
+  }
+  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  if (!token) throw new UsageError("--github-merge-base needs GITHUB_TOKEN or GH_TOKEN");
+  const sha = (ref) => gitLine(["rev-parse", "--verify", `${ref}^{commit}`], { cwd: repoDir });
+  const mergeBase = await resolveMergeBase({
+    rest: createGitHubClient({ apiUrl: process.env.GITHUB_API_URL || "https://api.github.com", token }),
+    repository: values["github-merge-base"],
+    baseSha: sha(values.base),
+    headSha: sha(values.head || "HEAD"),
+  });
+  // A shallow clone may not have the merge base yet.
+  if (gitLine(["cat-file", "-t", mergeBase], { cwd: repoDir, allowFailure: true }) === null) {
+    gitLine(["fetch", "--no-tags", "--depth=1", "origin", mergeBase], { cwd: repoDir });
+  }
+  return mergeBase;
+}
+
 function requiredEnv(name) {
   const value = process.env[name];
   if (value === undefined || value === "") throw new Error(`Missing ${name}`);
@@ -253,7 +423,12 @@ async function main(argv) {
     process.stdout.write(command.help);
     return;
   }
-  const { values } = parseArgs({ args: rest, options: command.options, strict: true, allowPositionals: false });
+  let values;
+  try {
+    ({ values } = parseArgs({ args: rest, options: command.options, strict: true, allowPositionals: false }));
+  } catch (error) {
+    throw new UsageError(`${error.message}\n\n${command.help}`);
+  }
   await command.run(values);
 }
 
@@ -261,5 +436,7 @@ try {
   await main(process.argv.slice(2));
 } catch (error) {
   process.stderr.write(`weave-checks: ${error.message}\n`);
-  process.exitCode = process.exitCode || 1;
+  // Usage errors exit 2, so a script can tell "you called me wrong" from
+  // "a check flagged something" (1).
+  process.exitCode = error instanceof UsageError ? 2 : 1;
 }
