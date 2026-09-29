@@ -27,11 +27,17 @@ function parseCsv(text: string): string[][] {
 }
 
 function parseQueryString(url: string): Record<string, string> {
-  return url.split("?")[1]?.split("&").reduce((acc, pair) => {
-    const [key, value] = pair.split("=");
-    acc[key] = decodeURIComponent(value);
-    return acc;
-  }, {} as Record<string, string>);
+  return url
+    .split("?")[1]
+    ?.split("&")
+    .reduce(
+      (acc, pair) => {
+        const [key, value] = pair.split("=");
+        acc[key] = decodeURIComponent(value);
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
   // Breaks on: encoded &, multiple values for same key, no value, fragment
 }
 ```
@@ -159,16 +165,12 @@ Writing ad-hoc lowercase/trim/normalize logic instead of using consistent utilit
 ```typescript
 function searchByName(items: Item[], query: string): Item[] {
   const normalizedQuery = query.toLowerCase().trim();
-  return items.filter(item =>
-    item.name.toLowerCase().trim().includes(normalizedQuery)
-  );
+  return items.filter(item => item.name.toLowerCase().trim().includes(normalizedQuery));
 }
 
 function searchByEmail(users: User[], query: string): User[] {
   const normalizedQuery = query.toLowerCase().trim();
-  return users.filter(user =>
-    user.email.toLowerCase().trim().includes(normalizedQuery)
-  );
+  return users.filter(user => user.email.toLowerCase().trim().includes(normalizedQuery));
 }
 // Same normalization logic duplicated — will drift when one adds .normalize("NFC")
 ```
@@ -257,7 +259,10 @@ function generateId(): string {
 }
 
 function slugify(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
   // Breaks on: accented chars, CJK, emoji, multiple consecutive hyphens
 }
 ```

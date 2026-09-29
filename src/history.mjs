@@ -32,15 +32,15 @@ import { REVIEW_STATE } from "./parse.mjs";
 export function markerCodec(prefix = LEGACY_MARKER_PREFIX) {
   const prefixes = [...new Set([prefix, LEGACY_MARKER_PREFIX])];
   const trailing = new RegExp(`<!-- (?:${prefixes.join("|")}):([a-z0-9-]+) -->\\s*$`);
-  const format = (slug) => `<!-- ${prefix}:${slug} -->`;
+  const format = slug => `<!-- ${prefix}:${slug} -->`;
   return Object.freeze({
     format,
     // Appends the marker as its own trailing paragraph so it survives
     // GitHub's Markdown rendering as an invisible comment rather than
     // corrupting a ```suggestion block if placed inside one.
     append: (body, slug) => `${body}\n\n${format(slug)}`,
-    strip: (body) => body.replace(trailing, "").trim(),
-    extractSlug: (body) => trailing.exec(body)?.[1] ?? null,
+    strip: body => body.replace(trailing, "").trim(),
+    extractSlug: body => trailing.exec(body)?.[1] ?? null,
   });
 }
 
@@ -107,7 +107,10 @@ export function extractThreadsPage(data) {
   // re-request the same `after` value forever. Fail loudly instead so this
   // pass is skipped and logged (worker.mjs's history fetch is best-effort),
   // rather than looping.
-  if (pageInfo.hasNextPage === true && (typeof pageInfo.endCursor !== "string" || pageInfo.endCursor.length === 0)) {
+  if (
+    pageInfo.hasNextPage === true &&
+    (typeof pageInfo.endCursor !== "string" || pageInfo.endCursor.length === 0)
+  ) {
     throw new Error("GraphQL response has hasNextPage=true but no endCursor");
   }
   return { nodes: connection.nodes ?? [], pageInfo };
@@ -124,7 +127,11 @@ export const RESOLUTION_REPLY_PREFIX = "**Resolved by ";
 function resolutionAlreadyPosted(node, slug, codec) {
   if ((node.comments?.totalCount ?? 0) < 2) return false;
   const body = node.latest?.nodes?.[0]?.body;
-  return typeof body === "string" && body.startsWith(RESOLUTION_REPLY_PREFIX) && codec.extractSlug(body) === slug;
+  return (
+    typeof body === "string" &&
+    body.startsWith(RESOLUTION_REPLY_PREFIX) &&
+    codec.extractSlug(body) === slug
+  );
 }
 
 // Whether a thread no longer needs judging: resolved on GitHub, or judged
@@ -211,7 +218,11 @@ export function formatHistorySection(threads) {
   // Sort by the thread id, which is a stable, time-correlated ordering -- node
   // ids monotonically grow as GitHub creates more threads, so the tail is the
   // newest history and the head is the oldest.
-  const ordered = [...threads].sort((a, b) => (a.threadId < b.threadId ? -1 : a.threadId > b.threadId ? 1 : 0));
+  const ordered = [...threads].sort((a, b) =>
+    a.threadId < b.threadId ? -1
+    : a.threadId > b.threadId ? 1
+    : 0,
+  );
   // Either keep every thread or, if it would overshoot
   // MAX_HISTORY_THREADS, prefer open threads (any duplicate signal against an
   // unresolved finding matters more than one against a long-resolved one) and
@@ -222,8 +233,8 @@ export function formatHistorySection(threads) {
   if (ordered.length <= MAX_HISTORY_THREADS) {
     visible = ordered;
   } else {
-    const openThreads = ordered.filter((t) => !isSettled(t));
-    const resolvedThreads = ordered.filter((t) => isSettled(t));
+    const openThreads = ordered.filter(t => !isSettled(t));
+    const resolvedThreads = ordered.filter(t => isSettled(t));
     const openCount = openThreads.length;
     if (openCount >= MAX_HISTORY_THREADS) {
       // Both branches of the cap can drop RESOLVED threads too: when open
@@ -242,31 +253,36 @@ export function formatHistorySection(threads) {
     }
   }
   const droppedCount = droppedResolvedCount + droppedOpenCount;
-  const header = droppedCount > 0
-    ? droppedOpenCount > 0
-      // Open threads were trimmed -- flag it plainly rather than implying
-      // completeness, since the dedup judge and main agent can otherwise
-      // treat an excluded open finding as already covered. Also surface
-      // resolved-thread omissions when both kinds were dropped, since the
-      // resolved-only header would otherwise be silently misleading. Note
-      // that "older" only describes the OPEN drop -- resolved threads are
-      // dropped wholesale in this branch (the budget is fully consumed by
-      // open threads), so the newest resolved findings can be among those
-      // omitted and must not be characterized as "older".
-      ? `(Showing only the most recent ${visible.length} of ${ordered.length} previously-flagged threads -- ${droppedOpenCount} older OPEN thread(s) and ${droppedResolvedCount} other resolved thread(s) are also omitted; the shown set may not be a complete duplicate-detection history.)\n`
-      : `(Showing the most recent ${visible.filter((t) => isSettled(t)).length} resolved and all ${visible.filter((t) => !isSettled(t)).length} open previously-flagged threads; the older ${droppedResolvedCount} resolved ones are omitted.)\n`
+  const header =
+    droppedCount > 0 ?
+      droppedOpenCount > 0 ?
+        // Open threads were trimmed -- flag it plainly rather than implying
+        // completeness, since the dedup judge and main agent can otherwise
+        // treat an excluded open finding as already covered. Also surface
+        // resolved-thread omissions when both kinds were dropped, since the
+        // resolved-only header would otherwise be silently misleading. Note
+        // that "older" only describes the OPEN drop -- resolved threads are
+        // dropped wholesale in this branch (the budget is fully consumed by
+        // open threads), so the newest resolved findings can be among those
+        // omitted and must not be characterized as "older".
+        `(Showing only the most recent ${visible.length} of ${ordered.length} previously-flagged threads -- ${droppedOpenCount} older OPEN thread(s) and ${droppedResolvedCount} other resolved thread(s) are also omitted; the shown set may not be a complete duplicate-detection history.)\n`
+      : `(Showing the most recent ${visible.filter(t => isSettled(t)).length} resolved and all ${visible.filter(t => !isSettled(t)).length} open previously-flagged threads; the older ${droppedResolvedCount} resolved ones are omitted.)\n`
     : "";
-  return header + visible
-    .map((t) => {
-      const resolvedNote = isSettled(t) ? " (already resolved -- do not repeat this finding)" : "";
-      // Omit the truncation for OPEN threads -- the dedup judge depends on the
-      // exact body to tell a new finding from an existing one. RESOLVED threads
-      // are still capped at MAX_HISTORY_COMMENT_LENGTH so a single thread with
-      // a giant ```suggestion block can't dominate the section.
-      const text = isSettled(t) ? truncateForHistory(t.comment) : t.comment;
-      return `- [id=${t.threadId}] ${t.path}:${t.line} -- ${text}${resolvedNote}`;
-    })
-    .join("\n");
+  return (
+    header +
+    visible
+      .map(t => {
+        const resolvedNote =
+          isSettled(t) ? " (already resolved -- do not repeat this finding)" : "";
+        // Omit the truncation for OPEN threads -- the dedup judge depends on the
+        // exact body to tell a new finding from an existing one. RESOLVED threads
+        // are still capped at MAX_HISTORY_COMMENT_LENGTH so a single thread with
+        // a giant ```suggestion block can't dominate the section.
+        const text = isSettled(t) ? truncateForHistory(t.comment) : t.comment;
+        return `- [id=${t.threadId}] ${t.path}:${t.line} -- ${text}${resolvedNote}`;
+      })
+      .join("\n")
+  );
 }
 
 // Free, deterministic evidence for the resolution judge, computed from the
@@ -293,7 +309,7 @@ export function formatResolutionSection(openThreads, addedLines) {
     return "None -- this check has no previously-flagged issues open on this PR.";
   }
   return openThreads
-    .map((t) => {
+    .map(t => {
       const outdated = t.isOutdated ? " The anchored code has changed since this was posted." : "";
       return `- [id=${t.threadId}] ${t.path}:${t.line} -- ${t.comment}\n  Evidence: ${threadDiffEvidence(t, addedLines)}${outdated}`;
     })
@@ -312,7 +328,7 @@ export function formatResolutionSection(openThreads, addedLines) {
 export function validateResolutions(resolutions, openThreads) {
   if (!Array.isArray(resolutions)) return [];
 
-  const openIds = new Set(openThreads.map((t) => t.threadId));
+  const openIds = new Set(openThreads.map(t => t.threadId));
   const seen = new Set();
   const resolved = [];
   for (const row of resolutions) {
@@ -424,7 +440,8 @@ export function reviewsToHide(checkThreads, dismissedIds, resolvedThisRun) {
   const hidden = new Map();
   for (const [reviewId, thread] of threadByReview) {
     const allThreadsResolved = resolvedFlagsByReview.get(reviewId).every(Boolean);
-    const alreadyDismissed = thread.reviewState === REVIEW_STATE.DISMISSED || dismissedSet.has(reviewId);
+    const alreadyDismissed =
+      thread.reviewState === REVIEW_STATE.DISMISSED || dismissedSet.has(reviewId);
     if (!allThreadsResolved && !alreadyDismissed) continue;
 
     const existingReviewId = hidden.get(thread.reviewGraphqlId);
@@ -439,8 +456,13 @@ export function reviewsToHide(checkThreads, dismissedIds, resolvedThisRun) {
       // Two distinct REST ids under the same GraphQL id would mean a corrupt
       // API response; treat as data integrity fail rather than silently
       // picking one -- a mistake here hides the wrong review.
-      throw new Error(`review ${thread.reviewGraphqlId} reported with conflicting REST ids (${existingReviewId} vs ${reviewId})`);
+      throw new Error(
+        `review ${thread.reviewGraphqlId} reported with conflicting REST ids (${existingReviewId} vs ${reviewId})`,
+      );
     }
   }
-  return [...hidden.entries()].map(([graphqlId, reviewId]) => ({ reviewId, reviewGraphqlId: graphqlId }));
+  return [...hidden.entries()].map(([graphqlId, reviewId]) => ({
+    reviewId,
+    reviewGraphqlId: graphqlId,
+  }));
 }

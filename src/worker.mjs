@@ -4,9 +4,8 @@
 // run is `success` ONLY when the agent verdict is PASS; FAIL verdicts,
 // operational misses (CLI crash, JSON parse failure, structured-output
 // skipped), and every other non-PASS outcome publish as GitHub `neutral`.
-// The reasoning: the underlying issues are surfaced as REVIEW comments
-// already (REQUEST_CHANGES is deliberately not used -- see postReview()),
-// so a red status row doesn't add new signal, it only paints the check red
+// The reasoning: the underlying issues are surfaced as inline review
+// comments already, so a red status row doesn't add new signal, it only paints the check red
 // on the PR status row. Worse, there is no workflow event for "conversation
 // resolved" to flip a check back to green when a human dismisses a
 // finding, so a FAIL-on-findings check can stay red even after the
@@ -75,11 +74,7 @@ import {
   threadsForCheck,
   validateResolutions,
 } from "./history.mjs";
-import {
-  isRetryableGraphQLBody,
-  requestWithRetry,
-  truncateBody,
-} from "./githubapi.mjs";
+import { isRetryableGraphQLBody, requestWithRetry, truncateBody } from "./githubapi.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 // The agent invocation, verdict pipeline, and cost/duration arithmetic are
 // shared with the local runner (local.mjs, behind `weave-checks run`) so the
@@ -100,13 +95,6 @@ import {
 } from "./runner.mjs";
 import { formatTranscriptSection } from "./streamsplit.mjs";
 
-// Review events the worker may post findings under. COMMENT is the default
-// and the recommendation: the check run's own conclusion is what should gate
-// merges, and REQUEST_CHANGES blocks merging on any repo with "require
-// approval" regardless of whether this check is even required. It is offered
-// for consumers who want findings to hold a PR anyway.
-const ALLOWED_REVIEW_EVENTS = new Set([REVIEW_EVENT.COMMENT, REVIEW_EVENT.REQUEST_CHANGES]);
-
 // The CI default provider. `inherit` is not offered here: the worker isolates
 // every check from the runner's own Claude settings (`--setting-sources ""`),
 // so there is nothing to inherit.
@@ -116,37 +104,15 @@ export const DEFAULT_CI_PROVIDER = PROVIDER.ANTHROPIC;
 // action sets. Taking `env` as an argument (rather than reading process.env
 // inline) is what makes the coordinator testable without spawning it.
 export function readWorkerConfig(env) {
-  const required = (name) => {
+  const required = name => {
     const value = env[name];
     if (value === undefined || value === "") throw new Error(`Missing ${name}`);
     return value;
   };
-  const flag = (name, fallback) => {
-    const value = env[name];
-    if (value === undefined || value === "") return fallback;
-    if (value === "true") return true;
-    if (value === "false") return false;
-    throw new Error(`${name} must be "true" or "false", got ${JSON.stringify(value)}`);
-  };
-  const budget = (name, fallback) => {
-    const value = env[name] || fallback;
-    if (!/^\d+(\.\d+)?$/.test(value) || Number(value) <= 0) {
-      throw new Error(`${name} must be a positive USD amount, got ${JSON.stringify(value)}`);
-    }
-    return value;
-  };
-
   const providerName = env.WEAVE_CHECKS_PROVIDER || DEFAULT_CI_PROVIDER;
   if (providerName === PROVIDER.INHERIT) {
     throw new Error("provider inherit is local-only; use anthropic or weave-router in CI");
   }
-  const reviewEvent = env.WEAVE_CHECKS_REVIEW_EVENT || REVIEW_EVENT.COMMENT;
-  if (!ALLOWED_REVIEW_EVENTS.has(reviewEvent)) {
-    throw new Error(
-      `WEAVE_CHECKS_REVIEW_EVENT must be one of ${[...ALLOWED_REVIEW_EVENTS].join(", ")}, got ${JSON.stringify(reviewEvent)}`,
-    );
-  }
-
   return {
     headSha: required("HEAD_SHA"),
     repoDir: required("REPO_DIR"),
@@ -163,7 +129,8 @@ export function readWorkerConfig(env) {
     masterCheckRunId: required("MASTER_CHECK_RUN_ID"),
     repository: required("GITHUB_REPOSITORY"),
     apiUrl: env.GITHUB_API_URL || "https://api.github.com",
-    graphqlUrl: env.GITHUB_GRAPHQL_URL || `${env.GITHUB_API_URL || "https://api.github.com"}/graphql`,
+    graphqlUrl:
+      env.GITHUB_GRAPHQL_URL || `${env.GITHUB_API_URL || "https://api.github.com"}/graphql`,
     serverUrl: env.GITHUB_SERVER_URL || "https://github.com",
     runId: env.GITHUB_RUN_ID || "local",
     checks: JSON.parse(readFileSync(required("MATRIX_PATH"), "utf8")).check,
@@ -188,9 +155,8 @@ export function readWorkerConfig(env) {
     fullDiff: readFileSync(required("FULL_DIFF_PATH"), "utf8"),
     fullStat: readFileSync(required("FULL_STAT_PATH"), "utf8"),
     // Optional: the schema is a constant of this package.
-    schemaText: env.SCHEMA_PATH
-      ? readFileSync(env.SCHEMA_PATH, "utf8")
-      : JSON.stringify(RESULT_SCHEMA),
+    schemaText:
+      env.SCHEMA_PATH ? readFileSync(env.SCHEMA_PATH, "utf8") : JSON.stringify(RESULT_SCHEMA),
     concurrency: positiveInteger(env.WEAVE_CHECK_PARALLEL, 4),
     // Only the selected provider's credentials are read, so a consumer on
     // Anthropic never needs Weave secrets and a Router consumer missing one
@@ -202,24 +168,6 @@ export function readWorkerConfig(env) {
     branding: brandingFromEnv(env),
     // Named in user-facing text ("excluded by .weave-checks/.ignore").
     checksDir: env.WEAVE_CHECKS_DIR || ".weave-checks",
-    // Fixed and cheap on purpose: deduplication is a narrow yes/no judgment,
-    // not the check's own review, so it never inherits a check's (possibly
-    // pricier) configured model or cluster.
-    dedupModel: env.WEAVE_CHECKS_DEDUP_MODEL || DEDUP_MODEL,
-    dedupCluster: env.WEAVE_CHECKS_DEDUP_CLUSTER || DEDUP_CLUSTER,
-    budgets: {
-      review: budget("WEAVE_CHECKS_REVIEW_BUDGET", "2"),
-      resolution: budget("WEAVE_CHECKS_RESOLUTION_BUDGET", "1"),
-      dedup: budget("WEAVE_CHECKS_DEDUP_BUDGET", "0.5"),
-    },
-    reviewEvent,
-    // Toggles. With inline comments off, findings are listed on the check
-    // run's own summary instead of being posted as a review -- and because
-    // nothing is posted, there is no thread history to resolve or dedup
-    // against on the next run.
-    inlineComments: flag("WEAVE_CHECKS_INLINE_COMMENTS", true),
-    resolutionJudge: flag("WEAVE_CHECKS_RESOLUTION_JUDGE", true),
-    dedupJudge: flag("WEAVE_CHECKS_DEDUP_JUDGE", true),
   };
 }
 
@@ -372,18 +320,14 @@ export async function runWorker(config, deps = {}) {
   }
 
   async function fetchLivePRHeadSha() {
-    const pr = await github(
-      HTTP_METHOD.GET,
-      `repos/${REPOSITORY}/pulls/${PR_NUMBER}`,
-    );
+    const pr = await github(HTTP_METHOD.GET, `repos/${REPOSITORY}/pulls/${PR_NUMBER}`);
     return pr.head.sha;
   }
 
   // Guards the two GitHub-mutating actions in runCheck -- resolving/dismissing
   // threads and posting a review -- against a PR push landing mid-run. A single
-  // check invocation can take minutes (each Claude call has up to a few
-  // dollars of budget), so the one-time liveHeadSha check made at startup (see
-  // the top-level try block) is not enough by itself: by the time a check
+  // check invocation can take minutes, so the one-time liveHeadSha check made
+  // at startup (see the top-level try block) is not enough by itself: by the time a check
   // actually resolves a thread or posts a review, a newer push may have already
   // moved the PR's head. Re-checking immediately before each mutation means a
   // stale run never dismisses/resolves threads or posts a review for a PR state
@@ -457,7 +401,7 @@ export async function runWorker(config, deps = {}) {
   // check starts queued; the pool below takes them in order.
   function buildStates() {
     return new Map(
-      CHECKS.map((check) => [
+      CHECKS.map(check => [
         check.slug,
         {
           check,
@@ -477,21 +421,17 @@ export async function runWorker(config, deps = {}) {
   }
 
   async function createCheckRun(check) {
-    return github(
-      HTTP_METHOD.POST,
-      `repos/${REPOSITORY}/check-runs`,
-      {
-        name: childCheckRunName(BRANDING, check),
-        head_sha: HEAD_SHA,
-        external_id: `${config.runId}/${check.slug}`,
-        status: CHECK_RUN_STATUS.IN_PROGRESS,
-        details_url: `${config.serverUrl}/${REPOSITORY}/actions/runs/${config.runId}`,
-        output: {
-          title: `Running ${check.name}`,
-          summary: check.description,
-        },
+    return github(HTTP_METHOD.POST, `repos/${REPOSITORY}/check-runs`, {
+      name: childCheckRunName(BRANDING, check),
+      head_sha: HEAD_SHA,
+      external_id: `${config.runId}/${check.slug}`,
+      status: CHECK_RUN_STATUS.IN_PROGRESS,
+      details_url: `${config.serverUrl}/${REPOSITORY}/actions/runs/${config.runId}`,
+      output: {
+        title: `Running ${check.name}`,
+        summary: check.description,
       },
-    );
+    });
   }
 
   // Records a cost-lookup failure against the check it belongs to, so
@@ -590,9 +530,7 @@ export async function runWorker(config, deps = {}) {
       "",
       "## New findings",
       "",
-      accepted
-        .map((s, index) => `${index}. ${s.file}:${s.line} -- ${s.comment}`)
-        .join("\n"),
+      accepted.map((s, index) => `${index}. ${s.file}:${s.line} -- ${s.comment}`).join("\n"),
     ].join("\n");
   }
 
@@ -618,8 +556,7 @@ export async function runWorker(config, deps = {}) {
   // session/transcript to the per-phase evidence block in the check-run
   // summary.
   async function judgeResolutions(check, openThreads, recordAttempt) {
-    if (openThreads.length === 0 || !config.resolutionJudge)
-      return { resolutions: [], error: null, cost: 0, duration: 0 };
+    if (openThreads.length === 0) return { resolutions: [], error: null, cost: 0, duration: 0 };
 
     const invocation = await runCheckAgent({
       slug: check.slug,
@@ -628,7 +565,6 @@ export async function runWorker(config, deps = {}) {
       cluster: check.cluster,
       schemaText: JSON.stringify(RESOLUTION_SCHEMA),
       promptText: resolutionPromptFor(check, openThreads),
-      maxBudget: config.budgets.resolution,
     });
     recordAttempt?.("Resolution judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
@@ -643,10 +579,7 @@ export async function runWorker(config, deps = {}) {
       };
     }
 
-    const resolutions = validateResolutions(
-      decoded.resultObject.resolutions,
-      openThreads,
-    );
+    const resolutions = validateResolutions(decoded.resultObject.resolutions, openThreads);
     return {
       resolutions,
       raw: decoded.resultObject.resolutions ?? [],
@@ -668,17 +601,16 @@ export async function runWorker(config, deps = {}) {
   // session/transcript to the per-phase evidence block in the check-run
   // summary.
   async function judgeDuplicates(check, checkThreads, accepted, recordAttempt) {
-    if (accepted.length === 0 || checkThreads.length === 0 || !config.dedupJudge)
+    if (accepted.length === 0 || checkThreads.length === 0)
       return { accepted, cost: 0, duration: 0 };
 
     const invocation = await runCheckAgent({
       slug: check.slug,
       suffix: "dedup",
-      model: config.dedupModel,
-      cluster: config.dedupCluster,
+      model: DEDUP_MODEL,
+      cluster: DEDUP_CLUSTER,
       schemaText: JSON.stringify(DEDUP_SCHEMA),
       promptText: dedupPromptFor(check, checkThreads, accepted),
-      maxBudget: config.budgets.dedup,
     });
     recordAttempt?.("Dedup judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
@@ -693,9 +625,9 @@ export async function runWorker(config, deps = {}) {
     }
 
     const duplicateIndices = new Set(
-      Array.isArray(decoded.resultObject.duplicate_indices)
-        ? decoded.resultObject.duplicate_indices
-        : [],
+      Array.isArray(decoded.resultObject.duplicate_indices) ?
+        decoded.resultObject.duplicate_indices
+      : [],
     );
     return {
       accepted: accepted.filter((_, index) => !duplicateIndices.has(index)),
@@ -731,14 +663,17 @@ export async function runWorker(config, deps = {}) {
   // failure is recorded as a history error, not fatal to the check.
   async function applyResolutions(check, checkThreads, openThreads, judgment) {
     const historyErrors = [];
-    const threadById = new Map(checkThreads.map((t) => [t.threadId, t]));
-    const openIds = new Set(openThreads.map((t) => t.threadId));
+    const threadById = new Map(checkThreads.map(t => [t.threadId, t]));
+    const openIds = new Set(openThreads.map(t => t.threadId));
     // GitHub may refuse resolveReviewThread even after this check posted its
     // audit reply. Re-attempt the mutation on every run, but never re-post the
     // same reply or ask the judge the same question again.
     const alreadyReplied = checkThreads
-      .filter((thread) => thread.resolutionReplied && !thread.isResolved)
-      .map((thread) => ({ threadId: thread.threadId, evidence: "Previously judged resolved by this check." }));
+      .filter(thread => thread.resolutionReplied && !thread.isResolved)
+      .map(thread => ({
+        threadId: thread.threadId,
+        evidence: "Previously judged resolved by this check.",
+      }));
     const resolutions = [...judgment.resolutions, ...alreadyReplied];
     // Track only IDs whose resolveThread actually succeeded. reviewsToDismiss
     // and reviewsToHide honor this set, so a failed mutation keeps the parent
@@ -755,8 +690,7 @@ export async function runWorker(config, deps = {}) {
       // no longer matches this check run. Aborting on any move keeps a stale
       // run from leaving marks on a newer PR's review threads. The small
       // added cost (`fetchLivePRHeadSha` makes one extra REST call per
-      // resolution) is bounded by the same per-check budget as the agent
-      // calls and only fires when the loop runs.
+      // resolution) only fires when the loop runs.
       if (await threadSafeStale()) break;
       const thread = threadById.get(threadId);
       // Comment-less threads can't receive an audit reply but still resolve.
@@ -772,11 +706,7 @@ export async function runWorker(config, deps = {}) {
       }
       if (await threadSafeStale()) break;
       if (
-        await attemptHistory(
-          () => resolveThread(threadId),
-          `resolve ${threadId}`,
-          historyErrors,
-        )
+        await attemptHistory(() => resolveThread(threadId), `resolve ${threadId}`, historyErrors)
       ) {
         resolvedIds.push(threadId);
         if (openIds.has(threadId)) resolvedOpenIds.push(threadId);
@@ -888,14 +818,9 @@ export async function runWorker(config, deps = {}) {
   // `recordAttempt`, when provided, is forwarded to the dedup judge so the
   // invocation's transcript reaches the per-phase evidence block.
   async function applyFindings(check, checkThreads, result, recordAttempt) {
-    const dedup = await judgeDuplicates(
-      check,
-      checkThreads,
-      result.accepted ?? [],
-      recordAttempt,
-    );
+    const dedup = await judgeDuplicates(check, checkThreads, result.accepted ?? [], recordAttempt);
     const dedupDropped = (result.accepted?.length ?? 0) - dedup.accepted.length;
-    const comments = dedup.accepted.map((suggestion) => {
+    const comments = dedup.accepted.map(suggestion => {
       const comment = formatReviewComment(suggestion);
       return { ...comment, body: MARKERS.append(comment.body, check.slug) };
     });
@@ -919,27 +844,19 @@ export async function runWorker(config, deps = {}) {
     // HEAD (= the check's `commit_id` and RIGHT in line-colloquial terms), so
     // stamp both to RIGHT explicitly on every one -- including multi-line
     // suggestions whose start_line differs from line.
-    const comments = result.comments.map((comment) => ({
+    const comments = result.comments.map(comment => ({
       ...comment,
       side: "RIGHT",
       ...(comment.start_line !== undefined ? { start_side: "RIGHT" } : {}),
     }));
-    await github(
-      HTTP_METHOD.POST,
-      `repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews`,
-      {
-        commit_id: HEAD_SHA,
-        // COMMENT by default, not REQUEST_CHANGES: the check run's own
-        // conclusion (success/neutral) is what should gate merges via
-        // required-checks config, not GitHub's separate review-approval gate.
-        // REQUEST_CHANGES blocks merging on any repo with "require approval
-        // before merging" regardless of whether this specific check is even
-        // required, which is too blunt a default for an AI reviewer's findings.
-        event: config.reviewEvent,
-        body: `**${childCheckRunName(BRANDING, check)}**\n\n${result.reason}`,
-        comments,
-      },
-    );
+    await github(HTTP_METHOD.POST, `repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews`, {
+      commit_id: HEAD_SHA,
+      // Use a COMMENT review so the check run's own conclusion, rather than
+      // GitHub's separate review-approval gate, controls merge requirements.
+      event: REVIEW_EVENT.COMMENT,
+      body: `**${childCheckRunName(BRANDING, check)}**\n\n${result.reason}`,
+      comments,
+    });
   }
 
   async function completeCheckRun(state) {
@@ -952,9 +869,7 @@ export async function runWorker(config, deps = {}) {
     // event for "conversation resolved" to flip a red check green when a
     // human dismisses the finding, so red is the wrong signal here.
     const conclusion =
-      result.outcome === OUTCOME.PASS
-        ? GITHUB_CONCLUSION.SUCCESS
-        : GITHUB_CONCLUSION.NEUTRAL;
+      result.outcome === OUTCOME.PASS ? GITHUB_CONCLUSION.SUCCESS : GITHUB_CONCLUSION.NEUTRAL;
     // Cost is the most-watched number on the status-checks list (people open it
     // from the PR header and the table is the first thing visible), so surface
     // it in the title seen next to the check name, not only in the body. The
@@ -975,41 +890,26 @@ export async function runWorker(config, deps = {}) {
     // at all, so an eager read here throws before the gate below even applies,
     // masking the real error behind "Cannot read properties of undefined".
     const tallyLine =
-      result.outcome === OUTCOME.NEUTRAL
-        ? ""
-        : `${result.comments.length} findings ${config.inlineComments ? "posted" : "listed below"}; ${result.proseFallbacks.length} converted to prose before duplicate filtering because an unsafe range or replacement was removed; ${result.rejected.length} dropped after anchor validation; ${result.dedupDropped} dropped as duplicates of already-flagged comments.`;
+      result.outcome === OUTCOME.NEUTRAL ?
+        ""
+      : `${result.comments.length} findings posted; ${result.proseFallbacks.length} converted to prose before duplicate filtering because an unsafe range or replacement was removed; ${result.rejected.length} dropped after anchor validation; ${result.dedupDropped} dropped as duplicates of already-flagged comments.`;
     const conditionalLines = [
-      result.outcome === OUTCOME.NEUTRAL
-        ? `Error: ${result.error}`
-        : result.reason,
+      result.outcome === OUTCOME.NEUTRAL ? `Error: ${result.error}` : result.reason,
       result.outcome !== OUTCOME.NEUTRAL ? tallyLine : null,
-      // With inline comments off, the summary is the only place a finding is
-      // shown, so it carries them in full.
-      result.outcome !== OUTCOME.NEUTRAL && !config.inlineComments && result.findings?.length > 0
-        ? findingsList(result.findings)
-        : null,
-      result.resolvedCount
-        ? `Resolved ${result.resolvedCount} previously-flagged thread(s).`
-        : null,
-      result.stillOpenCount
-        ? `${result.stillOpenCount} previously-flagged thread(s) still open.`
-        : null,
-      result.dismissedCount
-        ? `Dismissed ${result.dismissedCount} fully-resolved review(s).`
-        : null,
-      result.hiddenCount
-        ? `Hid ${result.hiddenCount} dismissed review summary(s) (resolved reason).`
-        : null,
-      result.resolutionError
-        ? `Resolution judge error: ${result.resolutionError}`
-        : null,
-      result.historyErrors?.length
-        ? `History errors: ${result.historyErrors.join("; ")}`
-        : null,
-      costErrors?.length
-        ? `Cost lookup errors: ${costErrors.join("; ")}`
-        : null,
-    ].filter((line) => line !== null);
+      result.resolvedCount ?
+        `Resolved ${result.resolvedCount} previously-flagged thread(s).`
+      : null,
+      result.stillOpenCount ?
+        `${result.stillOpenCount} previously-flagged thread(s) still open.`
+      : null,
+      result.dismissedCount ? `Dismissed ${result.dismissedCount} fully-resolved review(s).` : null,
+      result.hiddenCount ?
+        `Hid ${result.hiddenCount} dismissed review summary(s) (resolved reason).`
+      : null,
+      result.resolutionError ? `Resolution judge error: ${result.resolutionError}` : null,
+      result.historyErrors?.length ? `History errors: ${result.historyErrors.join("; ")}` : null,
+      costErrors?.length ? `Cost lookup errors: ${costErrors.join("; ")}` : null,
+    ].filter(line => line !== null);
     const transcripts = transcriptsSection(state);
     // Each chunk is the (now-filtered) plaintext header/separator plus the
     // optional transcripts section. Building them as separate blocks makes
@@ -1017,7 +917,7 @@ export async function runWorker(config, deps = {}) {
     // multi-line string scan. The separators are real `""` chunks that join()
     // renders as a blank line -- filtering only `null` (not `""`) is what
     // makes that gap actually show up in the posted summary.
-    const buildChunks = (withTranscripts) => {
+    const buildChunks = withTranscripts => {
       const transcriptChunk = withTranscripts ? transcripts : null;
       return [
         costLine,
@@ -1027,7 +927,7 @@ export async function runWorker(config, deps = {}) {
         // no transcript chunk means no gap to open one, so nothing to show.
         transcriptChunk === null ? null : "",
         transcriptChunk,
-      ].filter((chunk) => chunk !== null);
+      ].filter(chunk => chunk !== null);
     };
     // First attempt: include the transcripts section. If the joined summary
     // exceeds the documented 65535-byte limit, drop the transcripts chunk
@@ -1045,9 +945,7 @@ export async function runWorker(config, deps = {}) {
         summary = [
           costLine,
           "",
-          result.outcome === OUTCOME.NEUTRAL
-            ? `Error: ${result.error}`
-            : result.reason,
+          result.outcome === OUTCOME.NEUTRAL ? `Error: ${result.error}` : result.reason,
         ].join("\n");
       }
     }
@@ -1071,32 +969,26 @@ export async function runWorker(config, deps = {}) {
 
   async function updateMaster(final = false) {
     const all = [...states.values()];
-    const running = all.filter((state) => state.status === STATUS.RUNNING).length;
-    const queued = all.filter((state) => state.status === STATUS.QUEUED).length;
-    const pass = all.filter((state) => state.outcome === OUTCOME.PASS).length;
+    const running = all.filter(state => state.status === STATUS.RUNNING).length;
+    const queued = all.filter(state => state.status === STATUS.QUEUED).length;
+    const pass = all.filter(state => state.outcome === OUTCOME.PASS).length;
     // "fail" here is just the internal OUTCOME.FAIL counter -- every external
     // check-run conclusion for those states is already neutral (see
     // completeCheckRun). The tally stays distinct in the table because the
     // top-line summary shows where findings landed; the *conclusion* on the
     // PR status row is neutral for ALL of them.
-    const fail = all.filter((state) => state.outcome === OUTCOME.FAIL).length;
-    const neutral = all.filter(
-      (state) => state.outcome === OUTCOME.NEUTRAL,
-    ).length;
-    const complete = all.filter((state) => state.status === STATUS.COMPLETE);
-    const totalCostUsd = totalCost(complete.map((state) => state.cost));
-    const totalDurationMs = totalDuration(
-      complete.map((state) => state.durationMs),
-    );
+    const fail = all.filter(state => state.outcome === OUTCOME.FAIL).length;
+    const neutral = all.filter(state => state.outcome === OUTCOME.NEUTRAL).length;
+    const complete = all.filter(state => state.status === STATUS.COMPLETE);
+    const totalCostUsd = totalCost(complete.map(state => state.cost));
+    const totalDurationMs = totalDuration(complete.map(state => state.durationMs));
     const hasCompleteMetrics =
       complete.length > 0 &&
-      complete.every(
-        (state) =>
-          Number.isFinite(state.cost) && Number.isFinite(state.durationMs),
-      );
+      complete.every(state => Number.isFinite(state.cost) && Number.isFinite(state.durationMs));
 
-    const header = hasCompleteMetrics
-      ? `**${BRANDING.aggregateName}** — ${pass} passed · ${fail} flagged · ${neutral} neutral · ${running} running · ${queued} queued — ${formatUsd(totalCostUsd)} total (${PROVIDER_IMPL.costLabel}), ${formatDuration(totalDurationMs)}`
+    const header =
+      hasCompleteMetrics ?
+        `**${BRANDING.aggregateName}** — ${pass} passed · ${fail} flagged · ${neutral} neutral · ${running} running · ${queued} queued — ${formatUsd(totalCostUsd)} total (${PROVIDER_IMPL.costLabel}), ${formatDuration(totalDurationMs)}`
       : `**${BRANDING.aggregateName}** — ${pass} passed · ${fail} flagged · ${neutral} neutral · ${running} running · ${queued} queued`;
 
     const summary = [
@@ -1104,16 +996,12 @@ export async function runWorker(config, deps = {}) {
       "",
       "| Check | Status | Cost | Duration | Current detail |",
       "| --- | --- | --- | --- | --- |",
-      ...all.map((state) => {
+      ...all.map(state => {
         // An unpriced row has cost/durationMs set to null -- formatUsd/
         // formatDuration render those as "—" rather than a misleading
         // "$0.00"/"0s" for metrics that simply weren't recorded.
-        const cost =
-          state.status === STATUS.COMPLETE ? formatUsd(state.cost) : "—";
-        const duration =
-          state.status === STATUS.COMPLETE
-            ? formatDuration(state.durationMs)
-            : "—";
+        const cost = state.status === STATUS.COMPLETE ? formatUsd(state.cost) : "—";
+        const duration = state.status === STATUS.COMPLETE ? formatDuration(state.durationMs) : "—";
         return `| ${state.check.name} | ${statusLabel(state)} | ${cost} | ${duration} | ${markdownCell(state.note)} |`;
       }),
     ].join("\n");
@@ -1126,13 +1014,14 @@ export async function runWorker(config, deps = {}) {
     // status row but is still useful to enumerate when scanning the table.
     const payload = {
       output: {
-        title: final
-          ? hasCompleteMetrics
-            ? `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${formatUsd(totalCostUsd)}`
+        title:
+          final ?
+            hasCompleteMetrics ?
+              `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${formatUsd(totalCostUsd)}`
             : `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral`
-          : hasCompleteMetrics
-            ? `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${running} running · ${formatUsd(totalCostUsd)}`
-            : `${BRANDING.aggregateName}: ${running} running · ${queued} queued`,
+          : hasCompleteMetrics ?
+            `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${running} running · ${formatUsd(totalCostUsd)}`
+          : `${BRANDING.aggregateName}: ${running} running · ${queued} queued`,
         summary,
       },
     };
@@ -1148,9 +1037,9 @@ export async function runWorker(config, deps = {}) {
       // reachable via a top-level coordinator error -- which still applies;
       // this branch is downstream of that and has already filtered it out.
       payload.conclusion =
-        pass === all.length && all.length > 0
-          ? GITHUB_CONCLUSION.SUCCESS
-          : GITHUB_CONCLUSION.NEUTRAL;
+        pass === all.length && all.length > 0 ?
+          GITHUB_CONCLUSION.SUCCESS
+        : GITHUB_CONCLUSION.NEUTRAL;
       // The next run reads this back to decide whether it may narrow its diff
       // to `HEAD_SHA..<new head>`. It is deliberately NOT the conclusion above:
       // that collapses a FAIL verdict and a crashed CLI into the same
@@ -1215,7 +1104,7 @@ export async function runWorker(config, deps = {}) {
     state.note = `${check.description} Agent is reviewing changed lines.`;
 
     const checkThreads = threadsForCheck(rawThreadNodes, check.slug, MARKERS);
-    const openThreads = checkThreads.filter((thread) => !isSettled(thread));
+    const openThreads = checkThreads.filter(thread => !isSettled(thread));
 
     // Per-phase transcript evidence for the check-run summary's collapsible
     // section. Each entry is { phase, sessions:[{label,sessionId,text}] };
@@ -1276,9 +1165,7 @@ export async function runWorker(config, deps = {}) {
           schemaText: SCHEMA,
           historySection: formatHistorySection(checkThreads),
           productName: BRANDING.productName,
-          maxBudget: config.budgets.review,
-          onAttempt: (label, invocation) =>
-            recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
+          onAttempt: (label, invocation) => recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
           ...agentEnvironment(),
         }),
         judgeResolutions(check, openThreads, (label, invocation) =>
@@ -1296,12 +1183,7 @@ export async function runWorker(config, deps = {}) {
         );
       }
 
-      const resolutionOutcome = await applyResolutions(
-        check,
-        checkThreads,
-        openThreads,
-        judgment,
-      );
+      const resolutionOutcome = await applyResolutions(check, checkThreads, openThreads, judgment);
 
       result = initialResult;
       if (result.outcome !== OUTCOME.NEUTRAL) {
@@ -1320,11 +1202,7 @@ export async function runWorker(config, deps = {}) {
             outcome: OUTCOME.PASS,
             reason: `No new violations in this diff: all ${result.dedupDropped} finding(s) were already flagged on this PR.`,
           };
-        } else if (
-          result.outcome === OUTCOME.FAIL &&
-          result.comments.length > 0 &&
-          config.inlineComments
-        ) {
+        } else if (result.outcome === OUTCOME.FAIL && result.comments.length > 0) {
           // applyFindings() just made its own Claude call (the dedup judge), so
           // re-check the live head again rather than trusting the check made
           // before applyResolutions above.
@@ -1383,8 +1261,7 @@ export async function runWorker(config, deps = {}) {
       // summary lines. Empty phases are intentional: a phase that didn't run
       // is omitted from the section by formatTranscriptSection's own filter.
       state.transcriptSessions = transcriptSessions;
-      state.note =
-        result.outcome === OUTCOME.NEUTRAL ? result.error : result.reason;
+      state.note = result.outcome === OUTCOME.NEUTRAL ? result.error : result.reason;
     } catch (error) {
       state.result = {
         outcome: OUTCOME.NEUTRAL,
@@ -1399,10 +1276,7 @@ export async function runWorker(config, deps = {}) {
       // (post-dedup, if applyFindings ran) supersedes `initialResult` when
       // present since dedup's cost/duration are already folded into it.
       state.cost = totalCost([(result ?? initialResult)?.cost, judgment?.cost]);
-      state.durationMs = totalDuration([
-        (result ?? initialResult)?.duration,
-        judgment?.duration,
-      ]);
+      state.durationMs = totalDuration([(result ?? initialResult)?.duration, judgment?.duration]);
       // Same reasoning as the cost/duration preservation above: whatever
       // phases ran before the throw already produced transcript evidence, and
       // a stale-head abort or mutation failure is exactly when a reader most
@@ -1431,10 +1305,8 @@ export async function runWorker(config, deps = {}) {
   }
 
   async function runQueuedChecks(rawThreadNodes) {
-    const queued = [...states.values()].filter(
-      (state) => state.status === STATUS.QUEUED,
-    );
-    await runPool(queued, CONCURRENCY, async (state) => {
+    const queued = [...states.values()].filter(state => state.status === STATUS.QUEUED);
+    await runPool(queued, CONCURRENCY, async state => {
       try {
         await runCheck(state, rawThreadNodes);
       } catch (error) {
@@ -1555,13 +1427,13 @@ export async function runWorker(config, deps = {}) {
   // finished; a crashed pass leaves no results rather than partial ones.
   function writeResults(finalStates) {
     if (config.resultsPath === null) return;
-    const count = (outcome) => finalStates.filter((state) => state.outcome === outcome).length;
+    const count = outcome => finalStates.filter(state => state.outcome === outcome).length;
     const results = {
       provider: PROVIDER_IMPL.id,
       costLabel: PROVIDER_IMPL.costLabel,
       headSha: HEAD_SHA,
       aggregateCheckRunId: MASTER_CHECK_RUN_ID,
-      checks: finalStates.map((state) => ({
+      checks: finalStates.map(state => ({
         slug: state.check.slug,
         name: state.check.name,
         intelligence: state.check.intelligence,
@@ -1576,8 +1448,8 @@ export async function runWorker(config, deps = {}) {
         pass: count(OUTCOME.PASS),
         flagged: count(OUTCOME.FAIL),
         neutral: count(OUTCOME.NEUTRAL),
-        cost: totalCost(finalStates.map((state) => state.cost)),
-        durationMs: totalDuration(finalStates.map((state) => state.durationMs)),
+        cost: totalCost(finalStates.map(state => state.cost)),
+        durationMs: totalDuration(finalStates.map(state => state.durationMs)),
       },
     };
     writeFileSync(config.resultsPath, `${JSON.stringify(results, null, 2)}\n`);
@@ -1601,9 +1473,7 @@ export async function runWorker(config, deps = {}) {
       return detail;
     }
     const combined = `${detail}\n\n${table}`;
-    return Buffer.byteLength(combined, "utf8") > MAX_CHECK_RUN_SUMMARY_BYTES
-      ? detail
-      : combined;
+    return Buffer.byteLength(combined, "utf8") > MAX_CHECK_RUN_SUMMARY_BYTES ? detail : combined;
   }
 }
 
@@ -1639,22 +1509,9 @@ function transcriptsSection(state) {
     formatTranscriptSection("Reviewer", sessions.main),
     formatTranscriptSection("Resolution judge", sessions.resolve),
     formatTranscriptSection("Dedup judge", sessions.dedup),
-  ].filter((block) => block !== "");
+  ].filter(block => block !== "");
   if (blocks.length === 0) return null;
   return blocks.join("\n\n");
-}
-
-// Lists findings for a check run whose comments were not posted inline. A
-// replacement is left out: without a review there is nothing to commit it
-// from, and the prose comment already says what to change.
-function findingsList(findings) {
-  return findings
-    .map((finding) => {
-      const range =
-        finding.start_line < finding.line ? `${finding.start_line}-${finding.line}` : `${finding.line}`;
-      return `- \`${finding.file}:${range}\` — ${finding.comment.replace(/\s*\n\s*/g, " ")}`;
-    })
-    .join("\n");
 }
 
 async function main() {

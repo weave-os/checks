@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  PROVIDER,
-  childEnvironment,
-  createProvider,
-  parseProviderEnv,
-} from "./provider.mjs";
+import { PROVIDER, childEnvironment, createProvider, parseProviderEnv } from "./provider.mjs";
 import { anthropicProvider } from "./providers/anthropic.mjs";
 import { clientReportedCost } from "./providers/client-cost.mjs";
 import { inheritProvider } from "./providers/inherit.mjs";
@@ -14,7 +9,9 @@ import { inheritProvider } from "./providers/inherit.mjs";
 describe("parseProviderEnv", () => {
   it("parses KEY=VALUE lines, skipping blanks and comments", () => {
     assert.deepEqual(
-      parseProviderEnv("# gateway\nANTHROPIC_BASE_URL=https://gw.example.com\n\nCLAUDE_CODE_USE_BEDROCK=1\n"),
+      parseProviderEnv(
+        "# gateway\nANTHROPIC_BASE_URL=https://gw.example.com\n\nCLAUDE_CODE_USE_BEDROCK=1\n",
+      ),
       { ANTHROPIC_BASE_URL: "https://gw.example.com", CLAUDE_CODE_USE_BEDROCK: "1" },
     );
   });
@@ -71,7 +68,9 @@ describe("createProvider", () => {
       providerEnv: { ANTHROPIC_BASE_URL: "https://gw.example.com" },
     });
     assert.equal(provider.id, "anthropic");
-    assert.deepEqual(provider.envFor({ cluster: "low" }), { ANTHROPIC_BASE_URL: "https://gw.example.com" });
+    assert.deepEqual(provider.envFor({ cluster: "low" }), {
+      ANTHROPIC_BASE_URL: "https://gw.example.com",
+    });
   });
 
   it("re-exports the action's credential inputs under the CLI's names, only when set", () => {
@@ -79,7 +78,9 @@ describe("createProvider", () => {
       env: { WEAVE_CHECKS_ANTHROPIC_API_KEY: "sk-test", WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: "" },
     });
     assert.deepEqual(withKey.envFor({}), { ANTHROPIC_API_KEY: "sk-test" });
-    const withToken = createProvider(PROVIDER.ANTHROPIC, { env: { WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: "oat" } });
+    const withToken = createProvider(PROVIDER.ANTHROPIC, {
+      env: { WEAVE_CHECKS_CLAUDE_CODE_OAUTH_TOKEN: "oat" },
+    });
     assert.deepEqual(withToken.envFor({}), { CLAUDE_CODE_OAUTH_TOKEN: "oat" });
   });
 
@@ -89,10 +90,19 @@ describe("createProvider", () => {
     const providers = [
       createProvider(PROVIDER.ANTHROPIC),
       createProvider(PROVIDER.INHERIT),
-      createProvider(PROVIDER.WEAVE_ROUTER, { env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" } }),
+      createProvider(PROVIDER.WEAVE_ROUTER, {
+        env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk" },
+      }),
     ];
     for (const provider of providers) {
-      for (const name of ["WEAVE_CHECKS_APP_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "WEAVE_API_KEY", "WEAVE_ROUTER_KEY", "WEAVE_CHECKS_ANTHROPIC_API_KEY"]) {
+      for (const name of [
+        "WEAVE_CHECKS_APP_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "WEAVE_API_KEY",
+        "WEAVE_ROUTER_KEY",
+        "WEAVE_CHECKS_ANTHROPIC_API_KEY",
+      ]) {
         assert.ok(provider.dropEnv.includes(name), `${provider.id} must drop ${name}`);
       }
     }
@@ -104,7 +114,10 @@ describe("createProvider", () => {
   });
 
   it("requires both Router secrets only for weave-router", () => {
-    assert.throws(() => createProvider(PROVIDER.WEAVE_ROUTER, { env: {} }), /requires WEAVE_ROUTER_KEY/);
+    assert.throws(
+      () => createProvider(PROVIDER.WEAVE_ROUTER, { env: {} }),
+      /requires WEAVE_ROUTER_KEY/,
+    );
     assert.throws(
       () => createProvider(PROVIDER.WEAVE_ROUTER, { env: { WEAVE_ROUTER_KEY: "rk" } }),
       /requires WEAVE_API_KEY/,
@@ -117,9 +130,16 @@ describe("createProvider", () => {
 
   it("honours Router endpoint overrides", () => {
     const provider = createProvider(PROVIDER.WEAVE_ROUTER, {
-      env: { WEAVE_ROUTER_KEY: "rk", WEAVE_API_KEY: "wk", WEAVE_ROUTER_BASE_URL: "https://router.staging.example" },
+      env: {
+        WEAVE_ROUTER_KEY: "rk",
+        WEAVE_API_KEY: "wk",
+        WEAVE_ROUTER_BASE_URL: "https://router.staging.example",
+      },
     });
-    assert.equal(provider.envFor({ cluster: "low" }).ANTHROPIC_BASE_URL, "https://router.staging.example");
+    assert.equal(
+      provider.envFor({ cluster: "low" }).ANTHROPIC_BASE_URL,
+      "https://router.staging.example",
+    );
   });
 
   it("rejects an unknown provider", () => {
@@ -136,7 +156,13 @@ describe("client-reported cost", () => {
   // Unknown, never zero: a crashed or non-reporting CLI must not present a
   // billed run as free.
   it("reports unknown when the CLI reported no usable cost", () => {
-    for (const event of [null, {}, { total_cost_usd: "0.4" }, { total_cost_usd: -1 }, { total_cost_usd: Number.NaN }]) {
+    for (const event of [
+      null,
+      {},
+      { total_cost_usd: "0.4" },
+      { total_cost_usd: -1 },
+      { total_cost_usd: Number.NaN },
+    ]) {
       const { cost, error } = clientReportedCost(event);
       assert.equal(cost, null);
       assert.match(error, /did not report total_cost_usd/);

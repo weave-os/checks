@@ -55,13 +55,13 @@ function repos() {
       run(origin, "commit", "-q", "-m", message);
       return run(origin, "rev-parse", "HEAD");
     },
-    checkout: (ref) => run(origin, "checkout", "-q", ref),
-    branch: (name) => run(origin, "checkout", "-q", "-b", name),
-    merge: (ref) => {
+    checkout: ref => run(origin, "checkout", "-q", ref),
+    branch: name => run(origin, "checkout", "-q", "-b", name),
+    merge: ref => {
       run(origin, "merge", "-q", "--no-ff", "-m", "merge", ref);
       return run(origin, "rev-parse", "HEAD");
     },
-    read: (name) => readFileSync(path.join(outDir, name), "utf8"),
+    read: name => readFileSync(path.join(outDir, name), "utf8"),
   };
 }
 
@@ -70,21 +70,29 @@ function repos() {
 function fakeRest(space, { markers = {}, prCommits = null } = {}) {
   const calls = [];
   const isAncestor = (a, b) =>
-    realGit(["merge-base", "--is-ancestor", a, b], { cwd: space.origin, allowFailure: true }) !== null;
+    realGit(["merge-base", "--is-ancestor", a, b], { cwd: space.origin, allowFailure: true }) !==
+    null;
   const rest = async (method, apiPath) => {
     calls.push(apiPath);
     let match = /^repos\/o\/r\/compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)\?per_page=1$/.exec(apiPath);
     if (match) {
       const [, a, b] = match;
-      const status = a === b ? "identical" : isAncestor(a, b) ? "ahead" : isAncestor(b, a) ? "behind" : "diverged";
+      const status =
+        a === b ? "identical"
+        : isAncestor(a, b) ? "ahead"
+        : isAncestor(b, a) ? "behind"
+        : "diverged";
       return { status, merge_base_commit: { sha: run(space.origin, "merge-base", a, b) } };
     }
     match = /^repos\/o\/r\/pulls\/7\/commits\?per_page=100&page=(\d+)$/.exec(apiPath);
     if (match) {
       if (match[1] !== "1") return [];
-      return (prCommits ?? []).map((sha) => ({ sha }));
+      return (prCommits ?? []).map(sha => ({ sha }));
     }
-    match = /^repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs\?check_name=Weave%20Checks&filter=latest$/.exec(apiPath);
+    match =
+      /^repos\/o\/r\/commits\/([0-9a-f]+)\/check-runs\?check_name=Weave%20Checks&filter=latest$/.exec(
+        apiPath,
+      );
     if (match) {
       const marker = markers[match[1]];
       return { check_runs: marker === undefined ? [] : [{ external_id: marker }] };
@@ -105,12 +113,12 @@ function prepare(space, rest, overrides = {}) {
     prNumber: "7",
     aggregateName: "Weave Checks",
     sleep: async () => {},
-    log: (line) => logs.push(line),
+    log: line => logs.push(line),
     ...overrides,
-  }).then((result) => ({ ...result, logs }));
+  }).then(result => ({ ...result, logs }));
 }
 
-const addedFiles = (diff) => [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1]);
+const addedFiles = diff => [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(m => m[1]);
 
 describe("preparePullRequest", () => {
   it("reviews the full merge-base diff on a PR's first run", async () => {
@@ -119,7 +127,10 @@ describe("preparePullRequest", () => {
     space.branch("feature");
     const head = space.commit({ "app.js": "one\n" });
 
-    const result = await prepare(space, fakeRest(space, { prCommits: [head] }), { baseSha: base, headSha: head });
+    const result = await prepare(space, fakeRest(space, { prCommits: [head] }), {
+      baseSha: base,
+      headSha: head,
+    });
 
     assert.equal(result.mergeBaseSha, base);
     assert.equal(result.reviewBaseSha, base);
@@ -150,7 +161,10 @@ describe("preparePullRequest", () => {
 
     const result = await prepare(
       space,
-      fakeRest(space, { prCommits: [reviewed, head], markers: { [reviewed]: formatReviewedMarker(reviewed) } }),
+      fakeRest(space, {
+        prCommits: [reviewed, head],
+        markers: { [reviewed]: formatReviewedMarker(reviewed) },
+      }),
       { baseSha: base, headSha: head },
     );
 
@@ -191,7 +205,10 @@ describe("preparePullRequest", () => {
 
     const result = await prepare(
       space,
-      fakeRest(space, { prCommits: [reviewed, head], markers: { [reviewed]: formatReviewedMarker(head) } }),
+      fakeRest(space, {
+        prCommits: [reviewed, head],
+        markers: { [reviewed]: formatReviewedMarker(head) },
+      }),
       { baseSha: base, headSha: head },
     );
 
@@ -209,7 +226,10 @@ describe("preparePullRequest", () => {
 
     const result = await prepare(
       space,
-      fakeRest(space, { prCommits: [orphaned, head], markers: { [orphaned]: formatReviewedMarker(orphaned) } }),
+      fakeRest(space, {
+        prCommits: [orphaned, head],
+        markers: { [orphaned]: formatReviewedMarker(orphaned) },
+      }),
       { baseSha: base, headSha: head },
     );
 
@@ -223,10 +243,16 @@ describe("preparePullRequest", () => {
     space.branch("feature");
     const reviewed = space.commit({ "feature.js": "first\n" });
     space.checkout("main");
-    const newBase = space.commit({ "main-only.js": "v2 from main\n", "shared.js": "v2 from main\n" });
+    const newBase = space.commit({
+      "main-only.js": "v2 from main\n",
+      "shared.js": "v2 from main\n",
+    });
     space.checkout("feature");
     space.merge("main");
-    const head = space.commit({ "feature.js": "first\nsecond\n", "shared.js": "v2 from main\nbranch edit\n" });
+    const head = space.commit({
+      "feature.js": "first\nsecond\n",
+      "shared.js": "v2 from main\nbranch edit\n",
+    });
 
     const result = await prepare(
       space,
@@ -278,12 +304,15 @@ describe("preparePullRequest", () => {
 
     const result = await prepare(
       space,
-      fakeRest(space, { prCommits: [reviewed, head], markers: { [reviewed]: formatReviewedMarker(reviewed) } }),
+      fakeRest(space, {
+        prCommits: [reviewed, head],
+        markers: { [reviewed]: formatReviewedMarker(reviewed) },
+      }),
       { baseSha: base, headSha: head, ignorePathspecs: [":(exclude)vendor"] },
     );
 
     assert.equal(result.reviewBaseSha, base);
-    assert.ok(result.logs.some((line) => /widening to the merge base/.test(line)));
+    assert.ok(result.logs.some(line => /widening to the merge base/.test(line)));
     assert.deepEqual(addedFiles(space.read("pr.diff")), ["app.js"]);
   });
 
@@ -293,9 +322,16 @@ describe("preparePullRequest", () => {
     space.branch("feature");
     const reviewed = space.commit({ "a.js": "a\n" });
     const head = space.commit({ "b.js": "b\n" });
-    const rest = fakeRest(space, { prCommits: [reviewed, head], markers: { [reviewed]: formatReviewedMarker(reviewed) } });
+    const rest = fakeRest(space, {
+      prCommits: [reviewed, head],
+      markers: { [reviewed]: formatReviewedMarker(reviewed) },
+    });
 
-    const result = await prepare(space, rest, { baseSha: base, headSha: head, diffBase: DIFF_BASE.MERGE_BASE });
+    const result = await prepare(space, rest, {
+      baseSha: base,
+      headSha: head,
+      diffBase: DIFF_BASE.MERGE_BASE,
+    });
 
     assert.equal(result.reviewBaseSha, base);
     assert.equal(rest.calls.length, 1);
@@ -315,7 +351,7 @@ describe("preparePullRequest", () => {
     const result = await prepare(space, rest, { baseSha: base, headSha: head });
 
     assert.equal(result.reviewBaseSha, base);
-    assert.ok(result.logs.some((line) => /Could not list PR commits/.test(line)));
+    assert.ok(result.logs.some(line => /Could not list PR commits/.test(line)));
   });
 
   it("fails when the mandatory merge-base/head fetch never succeeds", async () => {
@@ -351,7 +387,12 @@ describe("preparePullRequest", () => {
     };
     const fetchEnv = fetchAuthEnv("https://github.com", "ghs_secret");
 
-    await prepare(space, fakeRest(space, { prCommits: [head] }), { baseSha: base, headSha: head, git, fetchEnv });
+    await prepare(space, fakeRest(space, { prCommits: [head] }), {
+      baseSha: base,
+      headSha: head,
+      git,
+      fetchEnv,
+    });
 
     assert.ok(seen.length > 0);
     for (const call of seen) {
@@ -362,7 +403,10 @@ describe("preparePullRequest", () => {
 
   it("rejects an unknown diff-base mode", async () => {
     const space = repos();
-    await assert.rejects(prepare(space, fakeRest(space), { baseSha: "a", headSha: "b", diffBase: "two-dot" }), /diff-base must be one of/);
+    await assert.rejects(
+      prepare(space, fakeRest(space), { baseSha: "a", headSha: "b", diffBase: "two-dot" }),
+      /diff-base must be one of/,
+    );
   });
 });
 
@@ -384,7 +428,10 @@ describe("verifyCheckout", () => {
   it("rejects a checkout that does not contain the PR head", () => {
     const space = repos();
     space.commit({ "README.md": "hello\n" });
-    assert.throws(() => verifyCheckout({ repoDir: space.origin, headSha: "f".repeat(40) }), /neither the PR head nor a merge of it/);
+    assert.throws(
+      () => verifyCheckout({ repoDir: space.origin, headSha: "f".repeat(40) }),
+      /neither the PR head nor a merge of it/,
+    );
   });
 });
 
@@ -393,7 +440,10 @@ describe("fetchAuthEnv", () => {
     const env = fetchAuthEnv("https://github.example.com/", "tok");
     assert.equal(env.GIT_CONFIG_COUNT, "1");
     assert.equal(env.GIT_CONFIG_KEY_0, "http.https://github.example.com/.extraheader");
-    assert.equal(env.GIT_CONFIG_VALUE_0, `AUTHORIZATION: basic ${Buffer.from("x-access-token:tok").toString("base64")}`);
+    assert.equal(
+      env.GIT_CONFIG_VALUE_0,
+      `AUTHORIZATION: basic ${Buffer.from("x-access-token:tok").toString("base64")}`,
+    );
     assert.equal(env.GIT_TERMINAL_PROMPT, "0");
   });
 

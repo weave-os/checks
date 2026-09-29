@@ -22,8 +22,24 @@ const DIFF = [
 ].join("\n");
 
 const CHECKS = [
-  { slug: "first-check", name: "First Check", description: "Flags firsts", intelligence: "low", model: "haiku", cluster: "low", path: "checks/first-check.md" },
-  { slug: "second-check", name: "Second Check", description: "Flags seconds", intelligence: "medium", model: "sonnet", cluster: "medium", path: "checks/second-check.md" },
+  {
+    slug: "first-check",
+    name: "First Check",
+    description: "Flags firsts",
+    intelligence: "low",
+    model: "haiku",
+    cluster: "low",
+    path: "checks/first-check.md",
+  },
+  {
+    slug: "second-check",
+    name: "Second Check",
+    description: "Flags seconds",
+    intelligence: "medium",
+    model: "sonnet",
+    cluster: "medium",
+    path: "checks/second-check.md",
+  },
 ];
 
 const ROOTS = [];
@@ -82,7 +98,12 @@ function reply(status, body) {
 // A GitHub stand-in that records every call and answers the handful of
 // endpoints the worker uses. `threads` are the raw review-thread nodes the
 // GraphQL history query returns; `failMaster` makes every aggregate PATCH 500.
-function fakeGitHub({ threads = [], failMaster = false, failResolve = false, liveHead = HEAD_SHA } = {}) {
+function fakeGitHub({
+  threads = [],
+  failMaster = false,
+  failResolve = false,
+  liveHead = HEAD_SHA,
+} = {}) {
   const calls = [];
   let nextId = 2000;
   const fetchFn = async (url, init = {}) => {
@@ -93,11 +114,18 @@ function fakeGitHub({ threads = [], failMaster = false, failResolve = false, liv
     if (route === "graphql") {
       if (body.query.includes("reviewThreads")) {
         return reply(200, {
-          data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: threads } } } },
+          data: {
+            repository: {
+              pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false }, nodes: threads } },
+            },
+          },
         });
       }
       if (body.query.includes("resolveReviewThread") && failResolve) {
-        return reply(200, { data: null, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] });
+        return reply(200, {
+          data: null,
+          errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }],
+        });
       }
       return reply(200, { data: {} });
     }
@@ -113,18 +141,27 @@ function fakeGitHub({ threads = [], failMaster = false, failResolve = false, liv
     }
     return reply(200, {});
   };
-  const find = (predicate) => calls.filter(predicate);
+  const find = predicate => calls.filter(predicate);
   return {
     fetchFn,
     calls,
-    childRuns: () => find((c) => c.method === "POST" && c.route === `repos/${REPO}/check-runs`),
-    masterPatches: () => find((c) => c.method === "PATCH" && c.route === `repos/${REPO}/check-runs/1000`),
-    childPatches: () => find((c) => c.method === "PATCH" && /check-runs\/2\d{3}$/.test(c.route)),
-    reviews: () => find((c) => c.method === "POST" && c.route === `repos/${REPO}/pulls/7/reviews`),
+    childRuns: () => find(c => c.method === "POST" && c.route === `repos/${REPO}/check-runs`),
+    masterPatches: () =>
+      find(c => c.method === "PATCH" && c.route === `repos/${REPO}/check-runs/1000`),
+    childPatches: () => find(c => c.method === "PATCH" && /check-runs\/2\d{3}$/.test(c.route)),
+    reviews: () => find(c => c.method === "POST" && c.route === `repos/${REPO}/pulls/7/reviews`),
   };
 }
 
-const pass = (reason = "clean") => ({ outcome: OUTCOME.PASS, reason, accepted: [], proseFallbacks: [], rejected: [], cost: 0.01, duration: 100 });
+const pass = (reason = "clean") => ({
+  outcome: OUTCOME.PASS,
+  reason,
+  accepted: [],
+  proseFallbacks: [],
+  rejected: [],
+  cost: 0.01,
+  duration: 100,
+});
 const fail = () => ({
   outcome: OUTCOME.FAIL,
   reason: "line one is bad",
@@ -153,32 +190,42 @@ describe("readWorkerConfig", () => {
   it("defaults to the anthropic provider and needs no Weave secret", () => {
     const config = readWorkerConfig(workerEnv().env);
     assert.equal(config.provider.id, "anthropic");
-    assert.equal(config.reviewEvent, "COMMENT");
-    assert.equal(config.inlineComments, true);
     assert.equal(config.schemaText, JSON.stringify(RESULT_SCHEMA));
-    assert.deepEqual(config.budgets, { review: "2", resolution: "1", dedup: "0.5" });
+    for (const option of [
+      "reviewEvent",
+      "inlineComments",
+      "resolutionJudge",
+      "dedupJudge",
+      "dedupModel",
+      "dedupCluster",
+      "budgets",
+    ]) {
+      assert.equal(Object.hasOwn(config, option), false, option);
+    }
   });
 
   it("fails at startup when weave-router is missing a key", () => {
     const { env } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" });
     assert.throws(() => readWorkerConfig(env), /requires WEAVE_API_KEY/);
-    const { env: noRouter } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_API_KEY: "wk" });
+    const { env: noRouter } = workerEnv({
+      WEAVE_CHECKS_PROVIDER: "weave-router",
+      WEAVE_API_KEY: "wk",
+    });
     assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
   });
 
   it("refuses the local-only inherit provider", () => {
-    assert.throws(() => readWorkerConfig(workerEnv({ WEAVE_CHECKS_PROVIDER: "inherit" }).env), /local-only/);
-  });
-
-  it("validates the review event, toggles, and budgets", () => {
-    assert.throws(() => readWorkerConfig(workerEnv({ WEAVE_CHECKS_REVIEW_EVENT: "APPROVE" }).env), /REVIEW_EVENT/);
-    assert.throws(() => readWorkerConfig(workerEnv({ WEAVE_CHECKS_INLINE_COMMENTS: "yes" }).env), /"true" or "false"/);
-    assert.throws(() => readWorkerConfig(workerEnv({ WEAVE_CHECKS_REVIEW_BUDGET: "-1" }).env), /positive USD/);
-    assert.equal(readWorkerConfig(workerEnv({ WEAVE_CHECKS_REVIEW_EVENT: "REQUEST_CHANGES" }).env).reviewEvent, "REQUEST_CHANGES");
+    assert.throws(
+      () => readWorkerConfig(workerEnv({ WEAVE_CHECKS_PROVIDER: "inherit" }).env),
+      /local-only/,
+    );
   });
 
   it("requires the aggregate check run id", () => {
-    assert.throws(() => readWorkerConfig(workerEnv({ MASTER_CHECK_RUN_ID: "" }).env), /Missing MASTER_CHECK_RUN_ID/);
+    assert.throws(
+      () => readWorkerConfig(workerEnv({ MASTER_CHECK_RUN_ID: "" }).env),
+      /Missing MASTER_CHECK_RUN_ID/,
+    );
   });
 });
 
@@ -191,10 +238,13 @@ describe("runWorker", () => {
 
     assert.equal(outcome.ok, true);
     assert.deepEqual(
-      github.childRuns().map((c) => c.body.name),
+      github.childRuns().map(c => c.body.name),
       ["Weave Check / First Check", "Weave Check / Second Check"],
     );
-    assert.deepEqual(github.childPatches().map((c) => c.body.conclusion), ["success", "success"]);
+    assert.deepEqual(
+      github.childPatches().map(c => c.body.conclusion),
+      ["success", "success"],
+    );
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.status, "completed");
     assert.equal(final.conclusion, "success");
@@ -214,7 +264,10 @@ describe("runWorker", () => {
 
     await run(env, github, async ({ check }) => (check.slug === "first-check" ? fail() : pass()));
 
-    assert.deepEqual(github.childRuns().map((c) => c.body.name), ["Acme Review / First Check", "Acme Review / Second Check"]);
+    assert.deepEqual(
+      github.childRuns().map(c => c.body.name),
+      ["Acme Review / First Check", "Acme Review / Second Check"],
+    );
     const [review] = github.reviews();
     assert.equal(review.body.event, "COMMENT");
     assert.equal(review.body.commit_id, HEAD_SHA);
@@ -223,18 +276,33 @@ describe("runWorker", () => {
     assert.equal(review.body.comments[0].side, "RIGHT");
     // A FAIL verdict is a completed review, so the base still advances, but
     // never paints anything red.
-    const conclusions = github.childPatches().map((c) => c.body.conclusion).sort();
+    const conclusions = github
+      .childPatches()
+      .map(c => c.body.conclusion)
+      .sort();
     assert.deepEqual(conclusions, ["neutral", "success"]);
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "neutral");
     assert.equal(final.external_id, `reviewed:${HEAD_SHA}`);
     assert.match(final.output.title, /^Acme Reviews: 1 pass · 1 flagged/);
     const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
-    assert.deepEqual(results.totals, { pass: 1, flagged: 1, neutral: 0, cost: 0.03, durationMs: 300 });
-    assert.deepEqual(results.checks.map((c) => c.outcome), ["flagged", "pass"]);
+    assert.deepEqual(results.totals, {
+      pass: 1,
+      flagged: 1,
+      neutral: 0,
+      cost: 0.03,
+      durationMs: 300,
+    });
     assert.deepEqual(
-      results.checks.map((c) => [c.intelligence, c.model]),
-      [["low", "haiku"], ["medium", "sonnet"]],
+      results.checks.map(c => c.outcome),
+      ["flagged", "pass"],
+    );
+    assert.deepEqual(
+      results.checks.map(c => [c.intelligence, c.model]),
+      [
+        ["low", "haiku"],
+        ["medium", "sonnet"],
+      ],
     );
     assert.equal(results.aggregateCheckRunId, "1000");
   });
@@ -244,7 +312,9 @@ describe("runWorker", () => {
     const github = fakeGitHub();
 
     await run(env, github, async ({ check }) =>
-      check.slug === "first-check" ? { outcome: OUTCOME.NEUTRAL, error: "Claude CLI exited 1", cost: null, duration: null } : pass(),
+      check.slug === "first-check" ?
+        { outcome: OUTCOME.NEUTRAL, error: "Claude CLI exited 1", cost: null, duration: null }
+      : pass(),
     );
 
     const final = github.masterPatches().at(-1).body;
@@ -252,16 +322,19 @@ describe("runWorker", () => {
     assert.equal(final.external_id, undefined);
   });
 
-  it("lists findings on the check run instead of posting a review when inline comments are off", async () => {
-    const { env } = workerEnv({ WEAVE_CHECKS_INLINE_COMMENTS: "false" });
+  it("posts findings inline as COMMENT reviews", async () => {
+    const { env } = workerEnv();
     const github = fakeGitHub();
 
     await run(env, github, async ({ check }) => (check.slug === "first-check" ? fail() : pass()));
 
-    assert.equal(github.reviews().length, 0);
-    const summaries = github.childPatches().map((c) => c.body.output.summary).join("\n");
-    assert.match(summaries, /1 findings listed below/);
-    assert.match(summaries, /- `app\/main\.go:1` — Rename `one`\./);
+    assert.equal(github.reviews().length, 1);
+    assert.equal(github.reviews()[0].body.event, "COMMENT");
+    const summaries = github
+      .childPatches()
+      .map(c => c.body.output.summary)
+      .join("\n");
+    assert.match(summaries, /1 findings posted/);
   });
 
   it("feeds legacy-marker history to the review under a rebranded marker", async () => {
@@ -275,7 +348,18 @@ describe("runWorker", () => {
           path: "app/main.go",
           line: 1,
           comments: {
-            nodes: [{ databaseId: 5, body: appendMarker("Old legacy finding.", "first-check"), pullRequestReview: { databaseId: 9, id: "R9", state: "COMMENTED", isMinimized: true } }],
+            nodes: [
+              {
+                databaseId: 5,
+                body: appendMarker("Old legacy finding.", "first-check"),
+                pullRequestReview: {
+                  databaseId: 9,
+                  id: "R9",
+                  state: "COMMENTED",
+                  isMinimized: true,
+                },
+              },
+            ],
           },
         },
       ],
@@ -291,23 +375,34 @@ describe("runWorker", () => {
     assert.doesNotMatch(histories.get("second-check"), /Old legacy finding/);
   });
 
-  const openThread = (slug) => ({
+  const openThread = slug => ({
     id: "T-open",
     isResolved: false,
     isOutdated: true,
     path: "app/main.go",
     line: 1,
     comments: {
-      nodes: [{ databaseId: 55, body: appendMarker("Rename `one`.", slug), pullRequestReview: { databaseId: 77, id: "R77", state: "COMMENTED", isMinimized: false } }],
+      nodes: [
+        {
+          databaseId: 55,
+          body: appendMarker("Rename `one`.", slug),
+          pullRequestReview: { databaseId: 77, id: "R77", state: "COMMENTED", isMinimized: false },
+        },
+      ],
     },
   });
-  const judgeInvocation = (structuredOutput) => ({
+  const judgeInvocation = structuredOutput => ({
     code: 0,
     sessionId: "judge-session",
     cost: 0.01,
     costLabel: "client-reported cost",
     transcript: [],
-    cli: { subtype: "success", is_error: false, structured_output: structuredOutput, duration_ms: 10 },
+    cli: {
+      subtype: "success",
+      is_error: false,
+      structured_output: structuredOutput,
+      duration_ms: 10,
+    },
   });
 
   it("resolves a fixed thread with an audit reply under the configured marker", async () => {
@@ -316,17 +411,26 @@ describe("runWorker", () => {
     const judged = [];
 
     await run(env, github, async () => pass(), {
-      runAgent: async (options) => {
+      runAgent: async options => {
         judged.push(options.suffix);
-        return judgeInvocation({ resolutions: [{ thread_id: "T-open", resolved: true, evidence: "Renamed to uno." }] });
+        return judgeInvocation({
+          resolutions: [{ thread_id: "T-open", resolved: true, evidence: "Renamed to uno." }],
+        });
       },
     });
 
     assert.deepEqual(judged, ["resolve"]);
-    const replyCall = github.calls.find((c) => c.route === `repos/${REPO}/pulls/7/comments/55/replies`);
-    assert.match(replyCall.body.body, /^\*\*Resolved by Weave Check \/ First Check\.\*\*\n\nRenamed to uno\./);
+    const replyCall = github.calls.find(
+      c => c.route === `repos/${REPO}/pulls/7/comments/55/replies`,
+    );
+    assert.match(
+      replyCall.body.body,
+      /^\*\*Resolved by Weave Check \/ First Check\.\*\*\n\nRenamed to uno\./,
+    );
     assert.match(replyCall.body.body, /<!-- acme-review:first-check -->$/);
-    assert.ok(github.calls.some((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")));
+    assert.ok(
+      github.calls.some(c => c.route === "graphql" && c.body.query.includes("resolveReviewThread")),
+    );
   });
 
   // Found live on this repo's own PR: GitHub refused resolveReviewThread, so
@@ -336,7 +440,13 @@ describe("runWorker", () => {
     const { env } = workerEnv();
     const replied = openThread("first-check");
     replied.comments.totalCount = 2;
-    replied.latest = { nodes: [{ body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check") }] };
+    replied.latest = {
+      nodes: [
+        {
+          body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check"),
+        },
+      ],
+    };
     const github = fakeGitHub({ threads: [replied] });
 
     await run(env, github, async () => pass(), {
@@ -345,22 +455,48 @@ describe("runWorker", () => {
       },
     });
 
-    assert.equal(github.calls.some((c) => c.route.endsWith("/replies")), false);
-    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")).length, 1);
-    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("minimizeComment")).length, 1);
+    assert.equal(
+      github.calls.some(c => c.route.endsWith("/replies")),
+      false,
+    );
+    assert.equal(
+      github.calls.filter(
+        c => c.route === "graphql" && c.body.query.includes("resolveReviewThread"),
+      ).length,
+      1,
+    );
+    assert.equal(
+      github.calls.filter(c => c.route === "graphql" && c.body.query.includes("minimizeComment"))
+        .length,
+      1,
+    );
     assert.ok(
-      github.childPatches().some((c) => c.body.output.summary.includes("Resolved 1 previously-flagged thread")),
+      github
+        .childPatches()
+        .some(c => c.body.output.summary.includes("Resolved 1 previously-flagged thread")),
       "expected the retried thread to resolve",
     );
-    assert.equal(github.childPatches().every((c) => !/still open/.test(c.body.output.summary)), true);
-    assert.equal(github.childPatches().every((c) => c.body.conclusion === "success"), true);
+    assert.equal(
+      github.childPatches().every(c => !/still open/.test(c.body.output.summary)),
+      true,
+    );
+    assert.equal(
+      github.childPatches().every(c => c.body.conclusion === "success"),
+      true,
+    );
   });
 
   it("keeps retrying an already-replied thread after GitHub refuses resolution", async () => {
     const { env } = workerEnv();
     const replied = openThread("first-check");
     replied.comments.totalCount = 2;
-    replied.latest = { nodes: [{ body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check") }] };
+    replied.latest = {
+      nodes: [
+        {
+          body: appendMarker("**Resolved by Weave Check / First Check.**\n\nFixed.", "first-check"),
+        },
+      ],
+    };
     const github = fakeGitHub({ threads: [replied], failResolve: true });
 
     await run(env, github, async () => pass(), {
@@ -369,24 +505,45 @@ describe("runWorker", () => {
       },
     });
 
-    assert.equal(github.calls.some((c) => c.route.endsWith("/replies")), false);
-    assert.equal(github.calls.filter((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")).length, 1);
-    assert.equal(github.calls.some((c) => c.body?.query?.includes("minimizeComment")), false);
-    const first = github.childPatches().find((c) => c.body.output.summary.includes("Resource not accessible by integration"));
+    assert.equal(
+      github.calls.some(c => c.route.endsWith("/replies")),
+      false,
+    );
+    assert.equal(
+      github.calls.filter(
+        c => c.route === "graphql" && c.body.query.includes("resolveReviewThread"),
+      ).length,
+      1,
+    );
+    assert.equal(
+      github.calls.some(c => c.body?.query?.includes("minimizeComment")),
+      false,
+    );
+    const first = github
+      .childPatches()
+      .find(c => c.body.output.summary.includes("Resource not accessible by integration"));
     assert.ok(first);
     assert.doesNotMatch(first.body.output.summary, /still open/);
   });
 
-  it("skips the resolution judge when it is turned off, leaving the thread open", async () => {
-    const { env } = workerEnv({ WEAVE_CHECKS_RESOLUTION_JUDGE: "false" });
+  it("runs the resolution judge for open threads", async () => {
+    const { env } = workerEnv();
     const github = fakeGitHub({ threads: [openThread("first-check")] });
+    const judged = [];
 
-    await run(env, github, async () => pass());
+    await run(env, github, async () => pass(), {
+      runAgent: async options => {
+        judged.push(options.suffix);
+        return judgeInvocation({
+          resolutions: [{ thread_id: "T-open", resolved: true, evidence: "No longer applies." }],
+        });
+      },
+    });
 
-    // Still-open history keeps the check flagged rather than green.
-    const first = github.childPatches().find((c) => /still open/.test(c.body.output.summary));
-    assert.ok(first, "expected the first check to report its still-open thread");
-    assert.equal(github.calls.some((c) => c.route === "graphql" && c.body.query.includes("resolveReviewThread")), false);
+    assert.deepEqual(judged, ["resolve"]);
+    assert.ok(
+      github.calls.some(c => c.route === "graphql" && c.body.query.includes("resolveReviewThread")),
+    );
   });
 
   it("closes the aggregate green without creating child runs when nothing is reviewable", async () => {
@@ -413,7 +570,10 @@ describe("runWorker", () => {
     await run(env, github, async () => fail());
 
     assert.equal(github.reviews().length, 0);
-    assert.deepEqual(github.childPatches().map((c) => c.body.conclusion), ["neutral", "neutral"]);
+    assert.deepEqual(
+      github.childPatches().map(c => c.body.conclusion),
+      ["neutral", "neutral"],
+    );
     assert.match(github.childPatches()[0].body.output.summary, /head moved on/);
   });
 

@@ -18,12 +18,9 @@ const FAST_LADDER = [0, 1, 2, 3];
 
 function headers(entries = {}) {
   const lowered = new Map(
-    Object.entries(entries).map(([key, value]) => [
-      key.toLowerCase(),
-      String(value),
-    ]),
+    Object.entries(entries).map(([key, value]) => [key.toLowerCase(), String(value)]),
   );
-  return { get: (name) => lowered.get(name.toLowerCase()) ?? null };
+  return { get: name => lowered.get(name.toLowerCase()) ?? null };
 }
 
 function response(status, body = "", headerEntries = {}) {
@@ -56,10 +53,10 @@ function recorder() {
   return {
     slept,
     logged,
-    sleepFn: async (ms) => {
+    sleepFn: async ms => {
       slept.push(ms);
     },
-    logFn: (message) => {
+    logFn: message => {
       logged.push(message);
     },
   };
@@ -83,17 +80,11 @@ describe("isRetryableStatus", () => {
   // the whole ladder on an answer that cannot change.
   it("retries a secondary-rate-limit 403 but not a permissions 403", () => {
     assert.equal(
-      isRetryableStatus(
-        403,
-        '{"message":"You have exceeded a secondary rate limit."}',
-      ),
+      isRetryableStatus(403, '{"message":"You have exceeded a secondary rate limit."}'),
       true,
     );
     assert.equal(
-      isRetryableStatus(
-        403,
-        '{"message":"Resource not accessible by integration"}',
-      ),
+      isRetryableStatus(403, '{"message":"Resource not accessible by integration"}'),
       false,
     );
   });
@@ -102,15 +93,16 @@ describe("isRetryableStatus", () => {
 describe("isRetryableGraphQLErrors", () => {
   it("recognizes GitHub's transient GraphQL failures", () => {
     assert.equal(
-      isRetryableGraphQLErrors([
-        { message: "Something went wrong while executing your query." },
-      ]),
+      isRetryableGraphQLErrors([{ message: "Something went wrong while executing your query." }]),
       true,
     );
     assert.equal(isRetryableGraphQLErrors([{ type: "RATE_LIMITED" }]), true);
     assert.equal(
       isRetryableGraphQLErrors([
-        { message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again." },
+        {
+          message:
+            "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+        },
       ]),
       true,
     );
@@ -118,9 +110,7 @@ describe("isRetryableGraphQLErrors", () => {
 
   it("treats a real query error as permanent", () => {
     assert.equal(
-      isRetryableGraphQLErrors([
-        { type: "NOT_FOUND", message: "Could not resolve to a node" },
-      ]),
+      isRetryableGraphQLErrors([{ type: "NOT_FOUND", message: "Could not resolve to a node" }]),
       false,
     );
     assert.equal(isRetryableGraphQLErrors([]), false);
@@ -136,10 +126,7 @@ describe("isRetryableGraphQLBody", () => {
   });
 
   it("does not retry a successful payload", () => {
-    assert.equal(
-      isRetryableGraphQLBody(JSON.stringify({ data: { repository: {} } })),
-      false,
-    );
+    assert.equal(isRetryableGraphQLBody(JSON.stringify({ data: { repository: {} } })), false);
   });
 });
 
@@ -307,10 +294,7 @@ describe("requestWithRetry", () => {
     );
     assert.equal(result.ok, false);
     assert.equal(result.status, 503);
-    assert.equal(
-      result.text,
-      '{"message": "No server is currently available"}',
-    );
+    assert.equal(result.text, '{"message": "No server is currently available"}');
     assert.equal(result.attempts, FAST_LADDER.length);
   });
 
@@ -397,11 +381,12 @@ describe("requestWithRetry", () => {
     // older 2-arg signature would; cover the contract either way.
     const fetchFn = fakeFetch([response(200, '{"ok": true}')]);
     const { sleepFn, logFn } = recorder();
-    const result = await requestWithRetry(
-      URL_UNDER_TEST,
-      undefined,
-      { fetchFn, sleepFn, logFn, retryDelaysMs: FAST_LADDER },
-    );
+    const result = await requestWithRetry(URL_UNDER_TEST, undefined, {
+      fetchFn,
+      sleepFn,
+      logFn,
+      retryDelaysMs: FAST_LADDER,
+    });
     assert.equal(result.ok, true);
     assert.equal(result.attempts, 1);
     assert.equal(fetchFn.callCount(), 1);
@@ -439,10 +424,7 @@ describe("requestWithRetry", () => {
     const transient = JSON.stringify({
       errors: [{ message: "Something went wrong while executing your query." }],
     });
-    const fetchFn = fakeFetch([
-      response(200, transient),
-      response(200, '{"data": {}}'),
-    ]);
+    const fetchFn = fakeFetch([response(200, transient), response(200, '{"data": {}}')]);
     const { sleepFn, logFn } = recorder();
     const result = await requestWithRetry(
       URL_UNDER_TEST,

@@ -4,87 +4,72 @@
 
 Advisory, per-concern code review for GitHub pull requests. Write one Markdown file for each review concern; Weave Checks runs a read-only agent against each check's criteria and the pull request's changed lines. Findings appear as review comments or on the check run. Operational misses stay neutral instead of masquerading as a pass or a finding.
 
-This repository contains the reusable GitHub Action, the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**: the action does not impose a universal coding policy.
+This repository contains the reusable GitHub workflow (and the action it runs), the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**: the action does not impose a universal coding policy.
 
 > The generic starter-check corpus and per-concern review format adapt material and design from [Continue Checks](https://github.com/continuedev/checks), Copyright 2025 Continue Dev, Inc., Apache-2.0. See [`NOTICE`](NOTICE) for attribution and [`LICENSE`](LICENSE) for this package's license.
 
-## GitHub Action
+## GitHub workflow
+
+Call the reusable workflow as a job, pinned to a full 40-character commit SHA of this repository:
 
 ```yaml
-name: AI review
+name: Weave Checks
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
-  checks:
-    # Pull requests from forks get no OIDC token, so the action cannot
-    # authenticate for them. Never switch to pull_request_target to work around it.
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run Weave Checks
-        uses: weave-os/checks@v1
-        with:
-          provider: anthropic
-          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-          checks-dir: .weave-checks
+  weave-checks:
+    uses: weave-os/checks/.github/workflows/weave-checks.yml@<40-character-commit-sha>
+    permissions:
+      id-token: write
+    secrets:
+      weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
+      weave-api-key: ${{ secrets.WEAVE_API_KEY }}
 ```
+
+Pin a commit SHA, not `main` or a tag: Weave issues the App token only to approved commits of this workflow, so a movable ref would stop working when it moves. The job needs nothing but `id-token: write`; every GitHub call it makes is as the Weave Checks App. Pull requests from forks get no OIDC token, so the workflow skips them. It runs on `pull_request` events only; never call it from `pull_request_target`.
 
 ### Setup: install the Weave Checks App
 
 Check runs, reviews, and replies always come from the **Weave Checks** GitHub App. The action never posts as `github-actions[bot]`, and you never handle an App key.
 
 1. **Install the App.** Open [github.com/apps/weave-checks](https://github.com/apps/weave-checks/installations/new), choose your organization, and select the repositories that will run Weave Checks. The App needs Checks and Pull requests write access for check runs and reviews, plus Contents write so it can resolve review threads. GitHub gates `resolveReviewThread` behind Contents write even though it changes no repository files. The action uses a repository-scoped installation token and never asks Claude to use it, but the token itself has permission to write repository contents.
-2. **Grant `id-token: write`** in the workflow, as in the example above. The job's own `GITHUB_TOKEN` needs no write access; `contents: read` is only for checkout.
-3. **Pass your model provider credentials** as inputs (see [Provider setup](#provider-setup)). Composite actions cannot read your secrets unless you pass them in.
+2. **Grant `id-token: write`** to the calling job, as in the example above. The job's own `GITHUB_TOKEN` needs nothing else: even the checkout is made as the App.
+3. **Pass your model provider credentials** as secrets (see [Provider setup](#provider-setup)). A called workflow cannot read your secrets unless you pass them in.
 
-**How the action authenticates:** at the start of the job it requests a GitHub OIDC token with the audience `weave-checks`. That token is GitHub's signed statement of which repository and workflow is running. The action sends it to Weave, which checks it and returns a Weave Checks App installation token. Weave takes the repository from the OIDC token's signed claims, not from anything in the request. The returned token is scoped to that one repository with the App's review permissions, and it expires within an hour. The action uses it for every GitHub call and revokes it when the job finishes.
+**How the workflow authenticates:** at the start of the job it requests a GitHub OIDC token with the audience `weave-checks`. That token is GitHub's signed statement of which repository is running, and which reusable workflow at which commit (`job_workflow_ref` and `job_workflow_sha`). The workflow runs the action from that same commit, so the code Weave approves is the code that runs. The action sends the token to Weave, which checks it and returns a Weave Checks App installation token. Weave takes the repository from the OIDC token's signed claims, not from anything in the request. The returned token is scoped to that one repository with the App's review permissions, and it expires within an hour. The action uses it for every GitHub call and revokes it when the job finishes. It is never a workflow output.
 
 **If authentication fails, the job stops before creating any check run,** with one of these explanations:
 
-- **`id-token: write` is missing**, or the pull request comes from a fork. Forks never receive OIDC tokens; skip them with the `if:` shown above. **Do not use `pull_request_target`** to work around this, since it would give an agent reading fork-controlled code your secrets.
+- **`id-token: write` is missing** from the calling job.
+- **The workflow is not an approved commit** of `weave-os/checks/.github/workflows/weave-checks.yml`, or the action was run directly as a step. Pin a released commit SHA.
 - **The App is not installed** on the repository's owner, or not on this repository. Add it from the App's installation settings.
 - **The pull request changes the workflow file that runs Weave Checks.** Weave refuses to issue a token for it, so a pull request cannot rewrite the job that holds the App token. Checks run normally again once the change merges.
 
 ### Provider setup
 
-The action defaults to `provider: anthropic`. It supports either an Anthropic API key, Claude Code OAuth credentials, or any Anthropic-compatible endpoint configured through `provider-env`. Example for a gateway:
+The workflow defaults to `provider: weave-router`, as in the example above. Set repository or organization secrets named `WEAVE_ROUTER_KEY` and `WEAVE_API_KEY` and pass both. Router mode requires an `intelligence` value on every check; the tier becomes the Router force-cluster, and the model alias is derived from the same value. The Weave API key is never passed to an agent.
+
+With `provider: anthropic`, pass an Anthropic API key, Claude Code OAuth credentials, or an Anthropic-compatible endpoint through the `provider-env` secret. Neither Weave key is needed. Example for a gateway, with a repository secret `WEAVE_CHECKS_PROVIDER_ENV` holding the lines to pass:
 
 ```yaml
-      - uses: weave-os/checks@v1
-        with:
-          provider: anthropic
-          provider-env: |
-            ANTHROPIC_BASE_URL=https://llm-gateway.example.com
-            ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
+with:
+  provider: anthropic
+secrets:
+  provider-env: ${{ secrets.WEAVE_CHECKS_PROVIDER_ENV }}
 ```
 
-If the gateway needs a secret, pass it through `provider-env` from a GitHub Actions secret. The value is set only on the agent process. Other examples include `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_BEDROCK=1`, and `CLAUDE_CODE_USE_VERTEX=1`. For Bedrock/Vertex, configure the relevant cloud identity/region in the job as appropriate.
-
-For **Weave Router**, set repository or organization secrets named `WEAVE_ROUTER_KEY` and `WEAVE_API_KEY`, then pass both explicitly:
-
-```yaml
-      - uses: weave-os/checks@v1
-        with:
-          provider: weave-router
-          weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
-          weave-api-key: ${{ secrets.WEAVE_API_KEY }}
-          allowed-intelligence: low,medium,high,maximum
+```text
+ANTHROPIC_BASE_URL=https://llm-gateway.example.com
+ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 ```
 
-Router mode requires an `intelligence` value on every check and both secrets. The intelligence tier also becomes the Router force-cluster; the model alias is derived from the same value. The Weave API key is never passed to an agent. Anthropic-compatible modes do **not** require either Weave key.
+`provider-env` is a secret because it usually carries credentials; its values are set only on the agent process. Other examples include `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_BEDROCK=1`, and `CLAUDE_CODE_USE_VERTEX=1`. For Bedrock/Vertex, configure the relevant cloud identity/region in the job as appropriate.
 
 ### Costs
 
-- `weave-router`: cost comes from Weave's session-cost API. It is Router-reported and includes Router-side auxiliary inference. Both Router credentials are required to report that cost.
-- `anthropic` and `inherit`: cost comes from the Claude CLI's `total_cost_usd`, when available. This is the CLI's **client-reported estimate**, not provider-billed cost; a gateway or cloud provider can bill differently. A missing measurement is reported as unknown, never as $0.
-
-The main review has a CLI-enforced `review-budget` ceiling. The resolution and dedup judges each have their own budget. This ceiling uses the CLI's own estimate; it cannot cap auxiliary costs recorded by a Router or a third-party provider.
+Weave Router mode reports the cost from its session-cost API, including Router-side auxiliary inference. Anthropic-compatible modes use the Claude CLI's client-reported estimate when available; a gateway or cloud provider can bill differently. A missing measurement is reported as unknown, never as $0. There is no per-invocation cost ceiling.
 
 ## Check files
 
@@ -101,7 +86,7 @@ When changed code logs or returns an error, require enough context to identify
 which operation failed without exposing secrets or user content.
 ```
 
-`name`, `description`, and `intelligence` are required. Intelligence must be one of `low`, `medium`, `high`, or `maximum`; it is the only model-selection field in frontmatter. The package maps `low` to Claude Code's rolling `haiku` alias, `medium` to `sonnet`, and `high` or `maximum` to `opus`. On Weave Router, the same tier is sent as the force-cluster. Full aliases track the latest model in each family; they avoid version pins but can change behavior as Claude Code updates its alias target. The action's `allowed-intelligence` input can restrict the accepted tiers.
+`name`, `description`, and `intelligence` are required. Intelligence must be one of `low`, `medium`, `high`, or `maximum`; it is the only model-selection field in frontmatter. The package maps `low` to Claude Code's rolling `haiku` alias, `medium` to `sonnet`, and `high` or `maximum` to `opus`. On Weave Router, the same tier is sent as the force-cluster. Full aliases track the latest model in each family; they avoid version pins but can change behavior as Claude Code updates its alias target.
 
 Frontmatter is a deliberately restricted, dependency-free format rather than full YAML: use one unquoted, single-line plain value per key. Quoted values, inline comments, lists/maps, tags, and block scalars are rejected instead of being silently misread.
 
@@ -140,39 +125,53 @@ npx @weave-os/checks run --checks-dir .weave-checks --base origin/main --format 
 
 `list --format json` prints the validated matrix. `print-schema` prints the result schema; `print-schema --kind resolution` and `--kind dedup` print the judge schemas.
 
-## Action inputs and outputs
+## Workflow inputs and outputs
 
-### Key inputs
+### Inputs
 
-| Input | Default | Purpose |
-| --- | --- | --- |
-| `provider` | `anthropic` | `anthropic` (direct/compatible endpoint) or `weave-router`. |
-| `anthropic-api-key` / `claude-code-oauth-token` | empty | Anthropic credentials; provide one if the selected endpoint needs them. |
-| `provider-env` | empty | Extra `KEY=VALUE` environment for Anthropic-compatible providers. |
-| `weave-router-key` / `weave-api-key` | empty | The two required Router credentials, only for Router mode. |
-| `checks-dir` | `.weave-checks` | Check definitions, relative to the repo root. |
-| `allowed-intelligence` | empty | Optional comma-separated allowlist: `low`, `medium`, `high`, `maximum`. |
-| `diff-base` | `incremental` | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
-| `inline-comments` | `true` | Post suggestions as review comments; otherwise list them in the check-run summary. |
-| `resolution-judge` / `dedup-judge` | `true` | Resolve old findings and suppress duplicates. |
-| `fail-on-findings` | `false` | Fail the final action step on findings, without changing check-run conclusions. |
-| `upload-diagnostics` | `false` | Opt in to uploading prompts and transcripts as a workflow artifact. |
-| `checkout` | `true` | Check out the PR merge ref. Set false if the calling job already checked out the PR. |
+| Input                 | Default         | Purpose                                                                                                  |
+| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
+| `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
+| `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
+| `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
+| `concurrency`         | `16`            | Checks run at once.                                                                                      |
+| `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                    |
+| `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                        |
+| `upload-diagnostics`  | `false`         | Upload prompts and transcripts as a workflow artifact.                                                   |
+| `runs-on`             | `ubuntu-latest` | Runner label for the job.                                                                                |
+| `timeout-minutes`     | `30`            | Job timeout.                                                                                             |
 
-Other inputs configure concurrency, three budgets, review event, the dedup judge's rolling alias and cluster, Node and Claude CLI versions, documentation filenames, and product/check-run/aggregate/marker branding. See [`action.yml`](action.yml) for the complete reference.
+### Secrets
+
+| Secret                                          | Purpose                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `weave-router-key` / `weave-api-key`            | The two required Router credentials, only for Router mode.                      |
+| `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them.         |
+| `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line. |
 
 ### Outputs
 
-`aggregate-check-run-id`, `pass`, `flagged`, `neutral`, `total-cost`, `review-base`, `summary-path`, and `results-path`. Result counts distinguish findings (`flagged`) from operational misses (`neutral`). `total-cost` is empty when any contributing cost is unknown. The JSON at `results-path` contains per-check results and the same totals.
+`pass`, `flagged`, `neutral`, and `total-cost`. Result counts distinguish findings (`flagged`) from operational misses (`neutral`). `total-cost` is empty when any contributing cost is unknown. Reviews are posted inline as `COMMENT` reviews; resolution and deduplication judges always run when they have work. These behaviors are fixed, not configurable. There are no per-invocation cost ceilings.
 
 ## Behavior and safety boundaries
 
-- The action creates the aggregate check run before its optional repository checkout and preparation. Its always-run cleanup closes it as neutral if setup or the worker stops before closing it. The step summary is written even after setup errors.
+- The action creates the aggregate check run before its repository checkout and preparation. Its always-run cleanup closes it as neutral if setup or the worker stops before closing it. The step summary is written even after setup errors.
 - Both the incremental review diff and the full merge-base PR diff are prepared. Resolution judges use the full scope; incremental review is used only when the previous aggregate proves all checks read the earlier diff and the reviewed commit is an ancestor of the current head. If the base branch moves, affected files are re-diffed from the current merge base. Uncertainty widens the diff rather than skipping unseen code.
-- Every child and aggregate conclusion is `success` or `neutral`. Findings are visible in comments/check summaries; only `fail-on-findings: true` makes the final action step fail. This does not make a GitHub check conclusion `failure`.
-- Markers are written with the configured prefix. The reader also recognizes legacy `weave-check` markers so existing comments remain in history after a rebrand.
+- Every child and aggregate conclusion is `success` or `neutral`. Findings are visible in comments/check summaries; only `fail-on-findings: true` makes the job fail. This does not make a GitHub check conclusion `failure`.
 - Diagnostics include prompts, changed code, tool results, and transcripts. They are not uploaded by default. Enable them only if the repository's privacy and retention policy allows it.
-- Tool permissions are read-only for the agent. The action and Claude Code CLI still process untrusted pull-request content; grant only the necessary workflow permissions and avoid exposing unrelated credentials.
+- Tool permissions are read-only for the agent. The action and Claude Code CLI still process untrusted pull-request content; nothing in the job executes pull-request code or checks out the PR head before minting the App token.
+
+## Releasing the workflow
+
+Consumers pin a commit of `.github/workflows/weave-checks.yml`, and Weave's token exchange accepts only commits on its versioned allowlist. Roll a release forward in this order:
+
+1. Merge the change to `main` and note the commit SHA.
+2. Add that SHA to the exchange's allowlist and deploy it.
+3. Publish the SHA in the release notes and docs.
+4. Migrate consumers to the new SHA, then remove SHAs no consumer should still run.
+
+This repository's own self-check calls the workflow from the pull request's commit, so it tests the change under review. The exchange must accept `weave-os/checks` at any commit for that to work.
 
 ## Publishing
 

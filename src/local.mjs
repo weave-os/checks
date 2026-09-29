@@ -57,7 +57,7 @@ export const DEFAULT_LOCAL_PROVIDER = PROVIDER.INHERIT;
 // environment as an argument (rather than reading process.env inline) is what
 // makes the parsing testable without spawning the script.
 export function readConfig(env) {
-  const required = (name) => {
+  const required = name => {
     const value = env[name];
     if (value === undefined || value === "") throw new Error(`Missing ${name}`);
     return value;
@@ -71,11 +71,9 @@ export function readConfig(env) {
     stat: readFileSync(required("STAT_PATH"), "utf8"),
     // Optional: the schema is a constant of this package, so a wrapper only
     // passes one to pin a different version of it.
-    schemaText: env.SCHEMA_PATH
-      ? readFileSync(env.SCHEMA_PATH, "utf8")
-      : JSON.stringify(RESULT_SCHEMA),
+    schemaText:
+      env.SCHEMA_PATH ? readFileSync(env.SCHEMA_PATH, "utf8") : JSON.stringify(RESULT_SCHEMA),
     parallel: positiveInteger(env.PARALLEL, DEFAULT_PARALLEL),
-    maxBudget: env.MAX_BUDGET || "2",
     // Only the selected provider's credentials are read: `inherit` and
     // `anthropic` need no Weave key, and `weave-router` fails here, before
     // any agent runs, if either of its two is missing.
@@ -102,21 +100,18 @@ export function positiveInteger(value, fallback) {
 // real agent.
 export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
   const addedLines = parseAddedLines(config.diff);
-  const checkResults = await runPool(config.checks, config.parallel, async (check) => {
+  const checkResults = await runPool(config.checks, config.parallel, async check => {
     process.stderr.write(`Weave Checks: running ${check.slug}...\n`);
-    const settingsPath = config.settingsDir === null
-      ? null
+    const settingsPath =
+      config.settingsDir === null ?
+        null
       : path.join(config.settingsDir, `settings-${check.intelligence}.json`);
     const dropEnv = ["WEAVE_API_KEY"];
     if (settingsPath !== null) {
       // Once the generated --settings overlay exists, inherited routing
       // variables must not compete with it. Without an overlay, preserve
       // shell-provided routing env.
-      dropEnv.push(
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_CUSTOM_HEADERS",
-      );
+      dropEnv.push("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS");
     }
     let checkResult;
     try {
@@ -140,7 +135,6 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
         // so that overlay is the only source of truth.
         provider: config.provider,
         productName: config.productName,
-        maxBudget: config.maxBudget ?? "2",
         settingSources: config.provider.id === PROVIDER.INHERIT ? null : "",
         settingsPath,
         dropEnv,
@@ -188,19 +182,19 @@ function summarizeCheck(check, checkResult) {
     outcome: publicOutcome(checkResult.outcome),
     reason: checkResult.reason ?? null,
     error: checkResult.error ?? null,
-    suggestions: (checkResult.accepted ?? []).map((suggestion) => ({
+    suggestions: (checkResult.accepted ?? []).map(suggestion => ({
       file: suggestion.file,
       line: suggestion.line,
       start_line: suggestion.start_line,
       comment: suggestion.comment,
       replacement: suggestion.replacement ?? null,
     })),
-    proseFallbacks: (checkResult.proseFallbacks ?? []).map((entry) => ({
+    proseFallbacks: (checkResult.proseFallbacks ?? []).map(entry => ({
       file: entry.suggestion.file,
       line: entry.suggestion.line,
       why: entry.why,
     })),
-    rejected: (checkResult.rejected ?? []).map((entry) => ({
+    rejected: (checkResult.rejected ?? []).map(entry => ({
       file: entry.suggestion?.file ?? null,
       line: entry.suggestion?.line ?? null,
       why: entry.why,
@@ -212,14 +206,14 @@ function summarizeCheck(check, checkResult) {
 
 // Tallies summarized checks, whose `outcome` is already the public name.
 function checkTotalsFor(checkResults) {
-  const count = (outcome) =>
-    checkResults.filter((checkResult) => checkResult.outcome === publicOutcome(outcome)).length;
+  const count = outcome =>
+    checkResults.filter(checkResult => checkResult.outcome === publicOutcome(outcome)).length;
   return {
     pass: count(OUTCOME.PASS),
     flagged: count(OUTCOME.FAIL),
     neutral: count(OUTCOME.NEUTRAL),
-    cost: totalCost(checkResults.map((checkResult) => checkResult.cost)),
-    durationMs: totalDuration(checkResults.map((checkResult) => checkResult.durationMs)),
+    cost: totalCost(checkResults.map(checkResult => checkResult.cost)),
+    durationMs: totalDuration(checkResults.map(checkResult => checkResult.durationMs)),
   };
 }
 

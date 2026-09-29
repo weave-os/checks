@@ -61,7 +61,10 @@ describe("markerCodec", () => {
 
   it("writes only the configured prefix", () => {
     assert.equal(acme.format("naming"), "<!-- acme-review:naming -->");
-    assert.equal(acme.append("Rename this.", "naming"), "Rename this.\n\n<!-- acme-review:naming -->");
+    assert.equal(
+      acme.append("Rename this.", "naming"),
+      "Rename this.\n\n<!-- acme-review:naming -->",
+    );
   });
 
   it("reads its own markers", () => {
@@ -93,14 +96,32 @@ describe("markerCodec", () => {
       isOutdated: false,
       path: "a.go",
       line: 1,
-      comments: { nodes: [{ databaseId: 1, body, pullRequestReview: { databaseId: 9, id: "R", state: "COMMENTED" } }] },
+      comments: {
+        nodes: [
+          {
+            databaseId: 1,
+            body,
+            pullRequestReview: { databaseId: 9, id: "R", state: "COMMENTED" },
+          },
+        ],
+      },
     });
     const threads = threadsForCheck(
-      [node("T1", appendMarker("legacy", "naming")), node("T2", acme.append("new", "naming")), node("T3", acme.append("other", "dead-code"))],
+      [
+        node("T1", appendMarker("legacy", "naming")),
+        node("T2", acme.append("new", "naming")),
+        node("T3", acme.append("other", "dead-code")),
+      ],
       "naming",
       acme,
     );
-    assert.deepEqual(threads.map((t) => [t.threadId, t.comment]), [["T1", "legacy"], ["T2", "new"]]);
+    assert.deepEqual(
+      threads.map(t => [t.threadId, t.comment]),
+      [
+        ["T1", "legacy"],
+        ["T2", "new"],
+      ],
+    );
   });
 });
 
@@ -192,7 +213,15 @@ function threadNode({
   isOutdated = false,
   commentId = 5000,
 }) {
-  const pullRequestReview = reviewId === null ? null : { databaseId: reviewId, id: reviewGraphqlId, state: reviewState, isMinimized: reviewIsMinimized };
+  const pullRequestReview =
+    reviewId === null ? null : (
+      {
+        databaseId: reviewId,
+        id: reviewGraphqlId,
+        state: reviewState,
+        isMinimized: reviewIsMinimized,
+      }
+    );
   return {
     id,
     isResolved,
@@ -200,11 +229,14 @@ function threadNode({
     path,
     line,
     comments: {
-      nodes: [{
-        databaseId: commentId,
-        body: slug === null ? "A human comment with no marker." : appendMarker("Flagged text.", slug),
-        pullRequestReview,
-      }],
+      nodes: [
+        {
+          databaseId: commentId,
+          body:
+            slug === null ? "A human comment with no marker." : appendMarker("Flagged text.", slug),
+          pullRequestReview,
+        },
+      ],
     },
   };
 }
@@ -212,64 +244,140 @@ function threadNode({
 describe("threadsForCheck", () => {
   it("keeps only threads marked for this check", () => {
     const nodes = [
-      threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 }),
-      threadNode({ id: "T2", isResolved: false, path: "b.go", line: 20, slug: "mobile-layout", reviewId: 2 }),
+      threadNode({
+        id: "T1",
+        isResolved: false,
+        path: "a.go",
+        line: 10,
+        slug: "anti-slop",
+        reviewId: 1,
+      }),
+      threadNode({
+        id: "T2",
+        isResolved: false,
+        path: "b.go",
+        line: 20,
+        slug: "mobile-layout",
+        reviewId: 2,
+      }),
       threadNode({ id: "T3", isResolved: false, path: "c.go", line: 30, slug: null, reviewId: 3 }),
     ];
     const threads = threadsForCheck(nodes, "anti-slop");
-    assert.deepEqual(threads.map((t) => t.threadId), ["T1"]);
+    assert.deepEqual(
+      threads.map(t => t.threadId),
+      ["T1"],
+    );
   });
 
   // GitHub can refuse resolveReviewThread (it needs Contents write) after the
   // audit reply is already posted. That reply is the judge's final word.
   it("counts a thread this check already replied to as resolved as settled", () => {
-    const reply = (body) => {
-      const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+    const reply = body => {
+      const node = threadNode({
+        id: "T1",
+        isResolved: false,
+        path: "a.go",
+        line: 10,
+        slug: "anti-slop",
+        reviewId: 1,
+      });
       node.comments.totalCount = 2;
       node.latest = { nodes: [{ body }] };
       return node;
     };
-    const [replied] = threadsForCheck([reply(appendMarker("**Resolved by Weave Check / Anti Slop.**\n\nFixed.", "anti-slop"))], "anti-slop");
+    const [replied] = threadsForCheck(
+      [reply(appendMarker("**Resolved by Weave Check / Anti Slop.**\n\nFixed.", "anti-slop"))],
+      "anti-slop",
+    );
     assert.equal(replied.isResolved, false);
     assert.equal(replied.resolutionReplied, true);
     assert.equal(isSettled(replied), true);
 
     // A human reply, another check's resolution, or no reply: still open.
-    for (const body of ["Please fix this.", appendMarker("**Resolved by Weave Check / Other.**", "other-check")]) {
+    for (const body of [
+      "Please fix this.",
+      appendMarker("**Resolved by Weave Check / Other.**", "other-check"),
+    ]) {
       const [open] = threadsForCheck([reply(body)], "anti-slop");
       assert.equal(isSettled(open), false, body);
     }
-    const [unreplied] = threadsForCheck([threadNode({ id: "T2", isResolved: false, path: "a.go", line: 1, slug: "anti-slop", reviewId: 1 })], "anti-slop");
+    const [unreplied] = threadsForCheck(
+      [
+        threadNode({
+          id: "T2",
+          isResolved: false,
+          path: "a.go",
+          line: 1,
+          slug: "anti-slop",
+          reviewId: 1,
+        }),
+      ],
+      "anti-slop",
+    );
     assert.equal(isSettled(unreplied), false);
   });
 
   // A thread with only its opening comment has that comment as `latest` too;
   // an opening comment that happens to start with the prefix is not a reply.
   it("does not treat the opening comment as a resolution reply", () => {
-    const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+    const node = threadNode({
+      id: "T1",
+      isResolved: false,
+      path: "a.go",
+      line: 10,
+      slug: "anti-slop",
+      reviewId: 1,
+    });
     node.comments.totalCount = 1;
     node.latest = { nodes: [{ body: appendMarker("**Resolved by nobody.**", "anti-slop") }] };
     assert.equal(isSettled(threadsForCheck([node], "anti-slop")[0]), false);
   });
 
   it("strips the marker from the surfaced comment text", () => {
-    const nodes = [threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 })];
+    const nodes = [
+      threadNode({
+        id: "T1",
+        isResolved: false,
+        path: "a.go",
+        line: 10,
+        slug: "anti-slop",
+        reviewId: 1,
+      }),
+    ];
     const [thread] = threadsForCheck(nodes, "anti-slop");
     assert.equal(thread.comment, "Flagged text.");
   });
 
   it("ignores a marked thread with no attached review", () => {
-    const nodes = [threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: null })];
+    const nodes = [
+      threadNode({
+        id: "T1",
+        isResolved: false,
+        path: "a.go",
+        line: 10,
+        slug: "anti-slop",
+        reviewId: null,
+      }),
+    ];
     assert.deepEqual(threadsForCheck(nodes, "anti-slop"), []);
   });
 
   it("skips a thread with no opening comment", () => {
-    const nodes = [{ id: "T1", isResolved: false, path: "a.go", line: 10, comments: { nodes: [] } }];
+    const nodes = [
+      { id: "T1", isResolved: false, path: "a.go", line: 10, comments: { nodes: [] } },
+    ];
     assert.deepEqual(threadsForCheck(nodes, "anti-slop"), []);
   });
 
   it("falls back to originalLine when line is null", () => {
-    const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: null, slug: "anti-slop", reviewId: 1 });
+    const node = threadNode({
+      id: "T1",
+      isResolved: false,
+      path: "a.go",
+      line: null,
+      slug: "anti-slop",
+      reviewId: 1,
+    });
     node.originalLine = 42;
     const [thread] = threadsForCheck([node], "anti-slop");
     assert.equal(thread.line, 42);
@@ -294,7 +402,14 @@ describe("threadsForCheck", () => {
   });
 
   it("defaults commentId to null and isOutdated to false when absent", () => {
-    const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+    const node = threadNode({
+      id: "T1",
+      isResolved: false,
+      path: "a.go",
+      line: 10,
+      slug: "anti-slop",
+      reviewId: 1,
+    });
     delete node.comments.nodes[0].databaseId;
     delete node.isOutdated;
     const [thread] = threadsForCheck([node], "anti-slop");
@@ -325,7 +440,14 @@ describe("threadsForCheck", () => {
   // but its summary cannot be hidden. The default must surface that miss so
   // hide logic can skip it cleanly.
   it("defaults reviewGraphqlId and reviewIsMinimized to false-like values when absent", () => {
-    const node = threadNode({ id: "T1", isResolved: false, path: "a.go", line: 10, slug: "anti-slop", reviewId: 1 });
+    const node = threadNode({
+      id: "T1",
+      isResolved: false,
+      path: "a.go",
+      line: 10,
+      slug: "anti-slop",
+      reviewId: 1,
+    });
     delete node.comments.nodes[0].pullRequestReview.id;
     delete node.comments.nodes[0].pullRequestReview.isMinimized;
     const [thread] = threadsForCheck([node], "anti-slop");
@@ -340,7 +462,9 @@ describe("formatHistorySection", () => {
   });
 
   it("lists each open thread with its id, location, and comment", () => {
-    const threads = [{ threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isResolved: false }];
+    const threads = [
+      { threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isResolved: false },
+    ];
     const section = formatHistorySection(threads);
     assert.match(section, /\[id=T1\] a\.go:10 -- Missing error log\./);
     assert.doesNotMatch(section, /already resolved/);
@@ -349,9 +473,14 @@ describe("formatHistorySection", () => {
   // A resolved thread must still be surfaced -- and flagged as resolved -- so
   // the agent (and the duplicate judge) never treat a dismissed finding as new.
   it("includes a resolved thread with a note not to repeat it", () => {
-    const threads = [{ threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isResolved: true }];
+    const threads = [
+      { threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isResolved: true },
+    ];
     const section = formatHistorySection(threads);
-    assert.match(section, /\[id=T1\] a\.go:10 -- Missing error log\. \(already resolved -- do not repeat this finding\)/);
+    assert.match(
+      section,
+      /\[id=T1\] a\.go:10 -- Missing error log\. \(already resolved -- do not repeat this finding\)/,
+    );
   });
 
   // Bounds each comment's contribution to the prompt: without a cap, a PR
@@ -359,7 +488,9 @@ describe("formatHistorySection", () => {
   // past the model's context and force the check to neutral.
   it("truncates a resolved comment longer than the cap", () => {
     const longComment = "x".repeat(500);
-    const threads = [{ threadId: "T1", path: "a.go", line: 10, comment: longComment, isResolved: true }];
+    const threads = [
+      { threadId: "T1", path: "a.go", line: 10, comment: longComment, isResolved: true },
+    ];
     const section = formatHistorySection(threads);
     assert.ok(section.length < longComment.length);
     assert.match(section, /\[truncated\]/);
@@ -370,7 +501,9 @@ describe("formatHistorySection", () => {
   // re-raise of a previously-reported issue is far worse than a longer prompt.
   it("does not truncate an open thread's body", () => {
     const longComment = "x".repeat(500);
-    const threads = [{ threadId: "T1", path: "a.go", line: 10, comment: longComment, isResolved: false }];
+    const threads = [
+      { threadId: "T1", path: "a.go", line: 10, comment: longComment, isResolved: false },
+    ];
     const section = formatHistorySection(threads);
     assert.doesNotMatch(section, /\[truncated\]/);
     assert.match(section, /x{300}/);
@@ -397,7 +530,10 @@ describe("formatHistorySection", () => {
   }
 
   it("adds no header and keeps every thread when under the cap", () => {
-    const threads = [...manyThreads(50, { resolved: true }), ...manyThreads(50, { resolved: false })];
+    const threads = [
+      ...manyThreads(50, { resolved: true }),
+      ...manyThreads(50, { resolved: false }),
+    ];
     const section = formatHistorySection(threads);
     assert.doesNotMatch(section, /Showing/);
     assert.equal(section.split("\n").length, 100);
@@ -406,11 +542,17 @@ describe("formatHistorySection", () => {
   // Over the cap with few open threads: only the oldest RESOLVED threads are
   // trimmed, every open thread survives, and the header says so plainly.
   it("trims only resolved threads when open threads fit the budget", () => {
-    const threads = [...manyThreads(250, { resolved: true }), ...manyThreads(10, { resolved: false })];
+    const threads = [
+      ...manyThreads(250, { resolved: true }),
+      ...manyThreads(10, { resolved: false }),
+    ];
     const section = formatHistorySection(threads);
-    assert.match(section, /Showing the most recent 190 resolved and all 10 open previously-flagged threads; the older 60 resolved ones are omitted\./);
+    assert.match(
+      section,
+      /Showing the most recent 190 resolved and all 10 open previously-flagged threads; the older 60 resolved ones are omitted\./,
+    );
     // Every open thread (unresolved) must appear -- none dropped.
-    const openThreads = threads.filter((t) => !t.isResolved);
+    const openThreads = threads.filter(t => !t.isResolved);
     for (const t of openThreads) {
       assert.ok(section.includes(`[id=${t.threadId}]`), `missing open thread ${t.threadId}`);
     }
@@ -492,7 +634,9 @@ describe("formatResolutionSection", () => {
   });
 
   it("includes the id, location, comment, and diff evidence", () => {
-    const threads = [{ threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isOutdated: false }];
+    const threads = [
+      { threadId: "T1", path: "a.go", line: 10, comment: "Missing error log.", isOutdated: false },
+    ];
     const section = formatResolutionSection(threads, addedLines);
     assert.match(section, /\[id=T1\] a\.go:10 -- Missing error log\./);
     assert.match(section, /Evidence: The flagged line is still a changed line/);
@@ -511,7 +655,12 @@ describe("formatResolutionSection", () => {
 
 describe("validateResolutions", () => {
   const open = [{ threadId: "T1" }, { threadId: "T2" }];
-  const row = (overrides) => ({ thread_id: "T1", resolved: true, evidence: "fixed in the diff", ...overrides });
+  const row = overrides => ({
+    thread_id: "T1",
+    resolved: true,
+    evidence: "fixed in the diff",
+    ...overrides,
+  });
 
   it("returns the id and evidence of rows resolved with evidence", () => {
     assert.deepEqual(validateResolutions([row({})], open), [
@@ -547,12 +696,18 @@ describe("validateResolutions", () => {
   });
 
   it("de-duplicates repeated thread ids", () => {
-    assert.deepEqual(validateResolutions([row({}), row({})], open).map((r) => r.threadId), ["T1"]);
+    assert.deepEqual(
+      validateResolutions([row({}), row({})], open).map(r => r.threadId),
+      ["T1"],
+    );
   });
 
   it("keeps valid rows alongside a malformed one", () => {
     const rows = [null, row({}), row({ thread_id: "T2", evidence: "lines deleted" })];
-    assert.deepEqual(validateResolutions(rows, open).map((r) => r.threadId), ["T1", "T2"]);
+    assert.deepEqual(
+      validateResolutions(rows, open).map(r => r.threadId),
+      ["T1", "T2"],
+    );
   });
 
   it("returns nothing for a non-array judgment", () => {
@@ -563,7 +718,9 @@ describe("validateResolutions", () => {
 
 describe("reviewsToDismiss", () => {
   it("dismisses a review whose only thread was already resolved", () => {
-    const threads = [{ threadId: "T1", reviewId: 1, isResolved: true, reviewState: "CHANGES_REQUESTED" }];
+    const threads = [
+      { threadId: "T1", reviewId: 1, isResolved: true, reviewState: "CHANGES_REQUESTED" },
+    ];
     assert.deepEqual(reviewsToDismiss(threads, []), [1]);
   });
 
@@ -611,9 +768,7 @@ describe("reviewsToHide", () => {
 
   it("hides a freshly dismissed review's summary", () => {
     const threads = [thread({ threadId: "T1", reviewId: 1, reviewState: "CHANGES_REQUESTED" })];
-    assert.deepEqual(reviewsToHide(threads, [1]), [
-      { reviewId: 1, reviewGraphqlId: "PRR_1" },
-    ]);
+    assert.deepEqual(reviewsToHide(threads, [1]), [{ reviewId: 1, reviewGraphqlId: "PRR_1" }]);
   });
 
   // A review dismissed on a previous run whose minimize step failed must
@@ -621,9 +776,7 @@ describe("reviewsToHide", () => {
   // converges -- the candidate pool isn't bounded to the current run only.
   it("hides a review already DISMISSED on a prior run", () => {
     const threads = [thread({ threadId: "T1", reviewId: 1 })];
-    assert.deepEqual(reviewsToHide(threads, []), [
-      { reviewId: 1, reviewGraphqlId: "PRR_1" },
-    ]);
+    assert.deepEqual(reviewsToHide(threads, []), [{ reviewId: 1, reviewGraphqlId: "PRR_1" }]);
   });
 
   it("does not hide a review whose state is not DISMISSED and was not dismissed this run", () => {
@@ -641,18 +794,36 @@ describe("reviewsToHide", () => {
   // human clicking "Resolve conversation").
   it("hides a COMMENTED review once every thread it opened is resolved", () => {
     const threads = [
-      thread({ threadId: "T1", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: true }),
-      thread({ threadId: "T2", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: true }),
+      thread({
+        threadId: "T1",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: true,
+      }),
+      thread({
+        threadId: "T2",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: true,
+      }),
     ];
-    assert.deepEqual(reviewsToHide(threads, []), [
-      { reviewId: 1, reviewGraphqlId: "PRR_1" },
-    ]);
+    assert.deepEqual(reviewsToHide(threads, []), [{ reviewId: 1, reviewGraphqlId: "PRR_1" }]);
   });
 
   it("does not hide a COMMENTED review with any thread still open", () => {
     const threads = [
-      thread({ threadId: "T1", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: true }),
-      thread({ threadId: "T2", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: false }),
+      thread({
+        threadId: "T1",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: true,
+      }),
+      thread({
+        threadId: "T2",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: false,
+      }),
     ];
     assert.deepEqual(reviewsToHide(threads, []), []);
   });
@@ -664,8 +835,18 @@ describe("reviewsToHide", () => {
   // primary path and would stay visible until a later run refreshed state.
   it("hides a COMMENTED review whose last open thread was resolved this run", () => {
     const threads = [
-      thread({ threadId: "T1", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: true }),
-      thread({ threadId: "T2", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: false }),
+      thread({
+        threadId: "T1",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: true,
+      }),
+      thread({
+        threadId: "T2",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: false,
+      }),
     ];
     assert.deepEqual(reviewsToHide(threads, [], ["T2"]), [
       { reviewId: 1, reviewGraphqlId: "PRR_1" },
@@ -676,9 +857,24 @@ describe("reviewsToHide", () => {
   // this run -- it must not qualify just because one thread resolved.
   it("does not hide a COMMENTED review when another thread stayed unresolved this run", () => {
     const threads = [
-      thread({ threadId: "T1", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: true }),
-      thread({ threadId: "T2", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: false }),
-      thread({ threadId: "T3", reviewId: 1, reviewState: REVIEW_STATE.COMMENTED, isResolved: false }),
+      thread({
+        threadId: "T1",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: true,
+      }),
+      thread({
+        threadId: "T2",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: false,
+      }),
+      thread({
+        threadId: "T3",
+        reviewId: 1,
+        reviewState: REVIEW_STATE.COMMENTED,
+        isResolved: false,
+      }),
     ];
     assert.deepEqual(reviewsToHide(threads, [], ["T2"]), []);
   });
@@ -705,16 +901,12 @@ describe("reviewsToHide", () => {
       thread({ threadId: "T1", reviewId: 1 }),
       thread({ threadId: "T2", reviewId: 1 }),
     ];
-    assert.deepEqual(reviewsToHide(threads, []), [
-      { reviewId: 1, reviewGraphqlId: "PRR_1" },
-    ]);
+    assert.deepEqual(reviewsToHide(threads, []), [{ reviewId: 1, reviewGraphqlId: "PRR_1" }]);
   });
 
   it("treats a discarded id set as no-op", () => {
     const threads = [thread({ threadId: "T1", reviewId: 1 })];
-    assert.deepEqual(reviewsToHide(threads, null), [
-      { reviewId: 1, reviewGraphqlId: "PRR_1" },
-    ]);
+    assert.deepEqual(reviewsToHide(threads, null), [{ reviewId: 1, reviewGraphqlId: "PRR_1" }]);
     assert.deepEqual(reviewsToHide(threads, undefined), [
       { reviewId: 1, reviewGraphqlId: "PRR_1" },
     ]);

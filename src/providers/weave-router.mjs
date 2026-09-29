@@ -150,7 +150,7 @@ export async function routerSessionCost(
   weaveAPIKey,
   {
     fetchFn = fetch,
-    sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleepFn = ms => new Promise(resolve => setTimeout(resolve, ms)),
     retryDelaysMs = COST_RETRY_DELAYS_MS,
     apiBaseUrl = WEAVE_API_BASE_URL,
   } = {},
@@ -232,14 +232,10 @@ export async function routerSessionCost(
       // Money is integer USD micros end to end. Anything else means the
       // contract moved, and silently coercing it would put a wrong dollar
       // figure on a check run, which is worse than an honest "—".
-      if (
-        !Number.isSafeInteger(body?.actual_cost_usd_micros) ||
-        body.actual_cost_usd_micros < 0
-      ) {
+      if (!Number.isSafeInteger(body?.actual_cost_usd_micros) || body.actual_cost_usd_micros < 0) {
         return {
           cost: null,
-          error:
-            "session cost response had no valid actual_cost_usd_micros integer",
+          error: "session cost response had no valid actual_cost_usd_micros integer",
         };
       }
       return {
@@ -254,8 +250,7 @@ export async function routerSessionCost(
     // or wrong-org API key (401/403), a session ID the router's contract
     // rejects (400) -- is a permanent answer that no amount of retrying
     // changes, so stop and report it immediately.
-    const retryable =
-      response.status === 404 || response.status === 429 || response.status >= 500;
+    const retryable = response.status === 404 || response.status === 429 || response.status >= 500;
     if (!retryable) break;
 
     // A 429 carries the rate limiter's own `Retry-After` (the Weave API

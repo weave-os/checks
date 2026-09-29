@@ -1,23 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  DEFAULT_BRANDING,
-  brandingFrom,
-  brandingFromEnv,
-  childCheckRunName,
-} from "./branding.mjs";
+import { DEFAULT_BRANDING, brandingFrom, brandingFromEnv, childCheckRunName } from "./branding.mjs";
 
 describe("DEFAULT_BRANDING", () => {
   // Existing Weave check runs and comment markers are matched by these exact
   // strings; a drift here orphans every open PR's history.
   it("keeps the Weave defaults byte-identical", () => {
-    assert.deepEqual({ ...DEFAULT_BRANDING }, {
-      productName: "Weave Check",
-      checkRunPrefix: "Weave Check",
-      aggregateName: "Weave Checks",
-      markerPrefix: "weave-check",
-    });
+    assert.deepEqual(
+      { ...DEFAULT_BRANDING },
+      {
+        productName: "Weave Check",
+        checkRunPrefix: "Weave Check",
+        aggregateName: "Weave Checks",
+        markerPrefix: "weave-check",
+      },
+    );
   });
 });
 
@@ -52,7 +50,10 @@ describe("brandingFrom", () => {
 
 describe("childCheckRunName", () => {
   it("joins the prefix and the check's display name", () => {
-    assert.equal(childCheckRunName(DEFAULT_BRANDING, { name: "Naming Clarity" }), "Weave Check / Naming Clarity");
+    assert.equal(
+      childCheckRunName(DEFAULT_BRANDING, { name: "Naming Clarity" }),
+      "Weave Check / Naming Clarity",
+    );
     assert.equal(
       childCheckRunName(brandingFrom({ checkRunPrefix: "Acme" }), { name: "Naming Clarity" }),
       "Acme / Naming Clarity",

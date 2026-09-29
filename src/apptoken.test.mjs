@@ -16,7 +16,10 @@ function reply(status, body) {
     ok: status >= 200 && status < 300,
     status,
     headers: { get: () => null },
-    text: async () => (body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body)),
+    text: async () =>
+      body === undefined ? ""
+      : typeof body === "string" ? body
+      : JSON.stringify(body),
   };
 }
 
@@ -55,7 +58,10 @@ describe("requestOidcToken", () => {
   it("explains the missing id-token permission", async () => {
     await assert.rejects(
       requestOidcToken({ env: {}, fetchFn: recordingFetch([]) }),
-      (error) => error instanceof TokenExchangeError && /id-token: write/.test(error.message) && /forks/.test(error.message),
+      error =>
+        error instanceof TokenExchangeError &&
+        /id-token: write/.test(error.message) &&
+        /forks/.test(error.message),
     );
   });
 
@@ -70,12 +76,25 @@ describe("requestOidcToken", () => {
 describe("exchangeForAppToken", () => {
   it("posts the OIDC token as a bearer and returns the installation token", async () => {
     const fetchFn = recordingFetch([
-      reply(200, { token: "ghs_app", expires_at: "2026-09-29T12:00:00Z", repository: "acme/widgets" }),
+      reply(200, {
+        token: "ghs_app",
+        expires_at: "2026-09-29T12:00:00Z",
+        repository: "acme/widgets",
+      }),
     ]);
 
-    const result = await exchangeForAppToken({ oidcToken: "oidc.jwt", exchangeUrl: "https://weave.test/x", fetchFn, ...quiet });
+    const result = await exchangeForAppToken({
+      oidcToken: "oidc.jwt",
+      exchangeUrl: "https://weave.test/x",
+      fetchFn,
+      ...quiet,
+    });
 
-    assert.deepEqual(result, { token: "ghs_app", expiresAt: "2026-09-29T12:00:00Z", repository: "acme/widgets" });
+    assert.deepEqual(result, {
+      token: "ghs_app",
+      expiresAt: "2026-09-29T12:00:00Z",
+      repository: "acme/widgets",
+    });
     assert.equal(fetchFn.calls[0].url, "https://weave.test/x");
     assert.equal(fetchFn.calls[0].init.method, "POST");
     assert.equal(fetchFn.calls[0].init.headers.Authorization, "Bearer oidc.jwt");
@@ -86,12 +105,15 @@ describe("exchangeForAppToken", () => {
 
   it("tells the user to install the App when it is not installed", async () => {
     const fetchFn = recordingFetch([
-      reply(404, { code: EXCHANGE_ERROR.NOT_INSTALLED, message: "The Weave Checks App is not installed for acme" }),
+      reply(404, {
+        code: EXCHANGE_ERROR.NOT_INSTALLED,
+        message: "The Weave Checks App is not installed for acme",
+      }),
     ]);
 
     await assert.rejects(
       exchangeForAppToken({ oidcToken: "t", fetchFn, ...quiet }),
-      (error) =>
+      error =>
         error instanceof TokenExchangeError &&
         error.code === EXCHANGE_ERROR.NOT_INSTALLED &&
         error.message.includes(APP_INSTALL_URL),
@@ -105,8 +127,12 @@ describe("exchangeForAppToken", () => {
       [EXCHANGE_ERROR.NOT_ALLOWED, /not enabled for Weave Checks/],
     ]) {
       await assert.rejects(
-        exchangeForAppToken({ oidcToken: "t", fetchFn: recordingFetch([reply(403, { code, message: "no" })]), ...quiet }),
-        (error) => error.code === code && hint.test(error.message),
+        exchangeForAppToken({
+          oidcToken: "t",
+          fetchFn: recordingFetch([reply(403, { code, message: "no" })]),
+          ...quiet,
+        }),
+        error => error.code === code && hint.test(error.message),
         code,
       );
     }
@@ -122,9 +148,14 @@ describe("exchangeForAppToken", () => {
   });
 
   it("does not retry a refusal", async () => {
-    const fetchFn = recordingFetch([reply(401, { code: EXCHANGE_ERROR.INVALID_TOKEN, message: "bad audience" })]);
+    const fetchFn = recordingFetch([
+      reply(401, { code: EXCHANGE_ERROR.INVALID_TOKEN, message: "bad audience" }),
+    ]);
 
-    await assert.rejects(exchangeForAppToken({ oidcToken: "t", fetchFn, ...quiet }), /invalid_oidc_token/);
+    await assert.rejects(
+      exchangeForAppToken({ oidcToken: "t", fetchFn, ...quiet }),
+      /invalid_oidc_token/,
+    );
     assert.equal(fetchFn.calls.length, 1);
   });
 
@@ -140,14 +171,22 @@ describe("revokeAppToken", () => {
   it("revokes the installation token with a DELETE", async () => {
     const fetchFn = recordingFetch([reply(204)]);
 
-    assert.deepEqual(await revokeAppToken({ token: "ghs_app", apiUrl: "https://api.test", fetchFn }), { revoked: true, status: 204 });
+    assert.deepEqual(
+      await revokeAppToken({ token: "ghs_app", apiUrl: "https://api.test", fetchFn }),
+      { revoked: true, status: 204 },
+    );
     assert.equal(fetchFn.calls[0].url, "https://api.test/installation/token");
     assert.equal(fetchFn.calls[0].init.method, "DELETE");
     assert.equal(fetchFn.calls[0].init.headers.Authorization, "Bearer ghs_app");
   });
 
   it("reports rather than throws when revocation fails", async () => {
-    const outcome = await revokeAppToken({ token: "t", fetchFn: async () => { throw new Error("offline"); } });
+    const outcome = await revokeAppToken({
+      token: "t",
+      fetchFn: async () => {
+        throw new Error("offline");
+      },
+    });
     assert.deepEqual(outcome, { revoked: false, status: null, error: "offline" });
   });
 });

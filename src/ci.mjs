@@ -36,7 +36,13 @@ export async function createAggregate({ rest, repository, headSha, aggregateName
 // is never overwritten with this generic one. Otherwise -- a crash in
 // checkout, preparation, discovery, or before the worker could PATCH --
 // close it neutral here. Neutral, never failure: see worker.mjs's header.
-export async function closeAggregate({ rest, repository, checkRunId, completePath, aggregateName }) {
+export async function closeAggregate({
+  rest,
+  repository,
+  checkRunId,
+  completePath,
+  aggregateName,
+}) {
   if (!checkRunId || existsSync(completePath)) return false;
   await rest("PATCH", `repos/${repository}/check-runs/${checkRunId}`, {
     status: CHECK_RUN_STATUS.COMPLETED,
@@ -54,8 +60,9 @@ export async function closeAggregate({ rest, repository, checkRunId, completePat
 // there is none.
 export function writeStepSummary({ summaryPath, stepSummaryPath, aggregateName }) {
   if (!stepSummaryPath) return;
-  const body = existsSync(summaryPath)
-    ? readFileSync(summaryPath, "utf8")
+  const body =
+    existsSync(summaryPath) ?
+      readFileSync(summaryPath, "utf8")
     : `## ${aggregateName}\n\nThe coordinator did not produce a summary. See the step logs above.\n`;
   appendFileSync(stepSummaryPath, body);
 }
@@ -83,14 +90,19 @@ export function report({ resultsPath, summaryPath, outputPath, failOnFindings })
   writeOutputs(outputPath, outputs);
   const flagged = results?.totals.flagged ?? 0;
   if (failOnFindings && flagged > 0) {
-    return { ok: false, message: `${flagged} check(s) flagged findings and fail-on-findings is set.` };
+    return {
+      ok: false,
+      message: `${flagged} check(s) flagged findings and fail-on-findings is set.`,
+    };
   }
   return { ok: true, message: null };
 }
 
 // Appends `name=value` lines to $GITHUB_OUTPUT (or prints them locally).
 export function writeOutputs(outputPath, outputs) {
-  const text = Object.entries(outputs).map(([name, value]) => `${name}=${value}\n`).join("");
+  const text = Object.entries(outputs)
+    .map(([name, value]) => `${name}=${value}\n`)
+    .join("");
   if (outputPath) appendFileSync(outputPath, text);
   else process.stdout.write(text);
 }

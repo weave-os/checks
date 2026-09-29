@@ -76,10 +76,10 @@ async function priorPRCommits({ rest, repository, prNumber, headSha }) {
       `repos/${repository}/pulls/${prNumber}/commits?per_page=${PR_COMMITS_PAGE_SIZE}&page=${page}`,
     );
     if (!Array.isArray(commits)) break;
-    shas.push(...commits.map((commit) => commit.sha));
+    shas.push(...commits.map(commit => commit.sha));
     if (commits.length < PR_COMMITS_PAGE_SIZE) break;
   }
-  return shas.reverse().filter((sha) => sha !== headSha);
+  return shas.reverse().filter(sha => sha !== headSha);
 }
 
 // Guard 1: the newest PR commit whose aggregate check run carries the
@@ -116,7 +116,9 @@ export async function findLastReviewedSha({
         `repos/${repository}/commits/${sha}/check-runs?check_name=${encodeURIComponent(aggregateName)}&filter=latest`,
       );
     } catch (error) {
-      log(`Could not read check runs for ${sha} (${error.message}); reviewing from the merge base.`);
+      log(
+        `Could not read check runs for ${sha} (${error.message}); reviewing from the merge base.`,
+      );
       return null;
     }
     if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha)) return sha;
@@ -128,7 +130,14 @@ export async function findLastReviewedSha({
 // `{ reviewBaseSha, oldMergeBaseSha }` where `oldMergeBaseSha` is non-null
 // exactly when the base branch was merged in since the candidate was
 // reviewed (the split case), or null to review from the merge base.
-export async function checkIncrementalBase({ rest, repository, mergeBaseSha, lastReviewedSha, headSha, log = () => {} }) {
+export async function checkIncrementalBase({
+  rest,
+  repository,
+  mergeBaseSha,
+  lastReviewedSha,
+  headSha,
+  log = () => {},
+}) {
   if (lastReviewedSha === null || lastReviewedSha === mergeBaseSha) return null;
 
   // Guard 2: is the current merge base already contained in the candidate?
@@ -160,7 +169,9 @@ export async function checkIncrementalBase({ rest, repository, mergeBaseSha, las
     const compare = await rest("GET", compareUrl(repository, lastReviewedSha, headSha));
     headStatus = compare?.status ?? null;
   } catch (error) {
-    log(`Could not compare ${lastReviewedSha}...${headSha} (${error.message}); reviewing from the merge base.`);
+    log(
+      `Could not compare ${lastReviewedSha}...${headSha} (${error.message}); reviewing from the merge base.`,
+    );
     return null;
   }
   if (headStatus !== "ahead") return null;
@@ -169,7 +180,13 @@ export async function checkIncrementalBase({ rest, repository, mergeBaseSha, las
 }
 
 function fetchShallow(git, repoDir, shas, env) {
-  return git(["fetch", "--no-tags", "--depth=1", "origin", ...shas], { cwd: repoDir, env, allowFailure: true }) !== null;
+  return (
+    git(["fetch", "--no-tags", "--depth=1", "origin", ...shas], {
+      cwd: repoDir,
+      env,
+      allowFailure: true,
+    }) !== null
+  );
 }
 
 // Git config that authenticates fetches from `serverUrl` with `token`,
@@ -202,20 +219,36 @@ export async function preparePullRequest({
   ignorePathspecs = [],
   diffBase = DIFF_BASE.INCREMENTAL,
   fetchEnv = undefined,
-  sleep = (seconds) => new Promise((resolve) => setTimeout(resolve, seconds * 1000)),
-  log = (message) => console.error(message),
+  sleep = seconds => new Promise(resolve => setTimeout(resolve, seconds * 1000)),
+  log = message => console.error(message),
 }) {
   if (!Object.values(DIFF_BASE).includes(diffBase)) {
-    throw new Error(`diff-base must be one of ${Object.values(DIFF_BASE).join(", ")}, got ${JSON.stringify(diffBase)}`);
+    throw new Error(
+      `diff-base must be one of ${Object.values(DIFF_BASE).join(", ")}, got ${JSON.stringify(diffBase)}`,
+    );
   }
-  const out = (name) => path.join(outDir, name);
+  const out = name => path.join(outDir, name);
   const mergeBaseSha = await resolveMergeBase({ rest, repository, baseSha, headSha });
 
   let reviewBaseSha = mergeBaseSha;
   let mainTouched = null;
   if (diffBase === DIFF_BASE.INCREMENTAL) {
-    const lastReviewedSha = await findLastReviewedSha({ rest, repository, prNumber, headSha, aggregateName, log });
-    const incremental = await checkIncrementalBase({ rest, repository, mergeBaseSha, lastReviewedSha, headSha, log });
+    const lastReviewedSha = await findLastReviewedSha({
+      rest,
+      repository,
+      prNumber,
+      headSha,
+      aggregateName,
+      log,
+    });
+    const incremental = await checkIncrementalBase({
+      rest,
+      repository,
+      mergeBaseSha,
+      lastReviewedSha,
+      headSha,
+      log,
+    });
     if (incremental !== null) {
       if (incremental.oldMergeBaseSha !== null) {
         // The base branch was merged in (GitHub's "Update branch"), so the
@@ -227,11 +260,25 @@ export async function preparePullRequest({
         // CURRENT merge base, everything else stays incremental.
         if (fetchShallow(git, repoDir, [incremental.oldMergeBaseSha, mergeBaseSha], fetchEnv)) {
           const names = git(
-            ["-c", "core.quotePath=false", "diff", "--name-only", "-z", incremental.oldMergeBaseSha, mergeBaseSha],
+            [
+              "-c",
+              "core.quotePath=false",
+              "diff",
+              "--name-only",
+              "-z",
+              incremental.oldMergeBaseSha,
+              mergeBaseSha,
+            ],
             { cwd: repoDir },
           );
-          mainTouched = names.toString("utf8").split("\0").filter((name) => name !== "");
-          writeFileSync(out(PREPARED_FILES.MAIN_TOUCHED), mainTouched.map((name) => `${name}\n`).join(""));
+          mainTouched = names
+            .toString("utf8")
+            .split("\0")
+            .filter(name => name !== "");
+          writeFileSync(
+            out(PREPARED_FILES.MAIN_TOUCHED),
+            mainTouched.map(name => `${name}\n`).join(""),
+          );
           reviewBaseSha = incremental.reviewBaseSha;
         } else {
           log("Could not fetch the pre-merge base; reviewing from the merge base.");
@@ -267,8 +314,10 @@ export async function preparePullRequest({
     );
   }
 
-  const diff = (from, pathspecs) => git(["diff", "-U0", from, headSha, "--", ...pathspecs], { cwd: repoDir });
-  const stat = (from, pathspecs) => git(["diff", "--stat", from, headSha, "--", ...pathspecs], { cwd: repoDir });
+  const diff = (from, pathspecs) =>
+    git(["diff", "-U0", from, headSha, "--", ...pathspecs], { cwd: repoDir });
+  const stat = (from, pathspecs) =>
+    git(["diff", "--stat", from, headSha, "--", ...pathspecs], { cwd: repoDir });
   const fullTreePathspecs = [".", ...ignorePathspecs];
 
   const fullDiff = diff(mergeBaseSha, fullTreePathspecs);
@@ -284,16 +333,23 @@ export async function preparePullRequest({
   } else if (mainTouched !== null) {
     // Concatenating two unified diffs is fine: a diff is a sequence of
     // per-file hunks, and the two path sets are disjoint by construction.
-    const include = mainTouched.map((name) => `:(literal)${name}`);
-    const exclude = mainTouched.map((name) => `:(exclude,literal)${name}`);
-    const parts = include.length === 0
-      ? { diff: [], stat: [] }
+    const include = mainTouched.map(name => `:(literal)${name}`);
+    const exclude = mainTouched.map(name => `:(exclude,literal)${name}`);
+    const parts =
+      include.length === 0 ?
+        { diff: [], stat: [] }
       : {
           diff: [diff(mergeBaseSha, [...include, ...ignorePathspecs])],
           stat: [stat(mergeBaseSha, [...include, ...ignorePathspecs])],
         };
-    reviewDiff = Buffer.concat([...parts.diff, diff(reviewBaseSha, [...fullTreePathspecs, ...exclude])]);
-    reviewStat = Buffer.concat([...parts.stat, stat(reviewBaseSha, [...fullTreePathspecs, ...exclude])]);
+    reviewDiff = Buffer.concat([
+      ...parts.diff,
+      diff(reviewBaseSha, [...fullTreePathspecs, ...exclude]),
+    ]);
+    reviewStat = Buffer.concat([
+      ...parts.stat,
+      stat(reviewBaseSha, [...fullTreePathspecs, ...exclude]),
+    ]);
   } else {
     reviewDiff = diff(reviewBaseSha, fullTreePathspecs);
     reviewStat = stat(reviewBaseSha, fullTreePathspecs);
@@ -305,7 +361,9 @@ export async function preparePullRequest({
   // whose file has since left the PR would never be closed. Widen back to the
   // merge base so the judge still runs.
   if (reviewDiff.length === 0 && fullDiff.length > 0 && reviewBaseSha !== mergeBaseSha) {
-    log(`Nothing reviewable changed since ${reviewBaseSha}; widening to the merge base so thread resolution still runs.`);
+    log(
+      `Nothing reviewable changed since ${reviewBaseSha}; widening to the merge base so thread resolution still runs.`,
+    );
     reviewBaseSha = mergeBaseSha;
     mainTouched = null;
     reviewDiff = fullDiff;
@@ -347,9 +405,10 @@ export async function preparePullRequest({
 export function verifyCheckout({ git = defaultGit, repoDir, headSha }) {
   const head = git(["rev-parse", "HEAD"], { cwd: repoDir }).toString("utf8").trim();
   if (head === headSha) return `Checkout is the PR head ${headSha}.`;
-  const secondParent = git(["rev-parse", "--verify", "--quiet", "HEAD^2"], { cwd: repoDir, allowFailure: true })
-    ?.toString("utf8")
-    .trim() ?? "";
+  const secondParent =
+    git(["rev-parse", "--verify", "--quiet", "HEAD^2"], { cwd: repoDir, allowFailure: true })
+      ?.toString("utf8")
+      .trim() ?? "";
   if (secondParent !== headSha) {
     throw new Error(
       `Checked-out commit ${head} is neither the PR head nor a merge of it ` +

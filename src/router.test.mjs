@@ -14,7 +14,7 @@ const WEAVE_API_KEY = "wk_test";
 function fakeFetch(responses) {
   let call = 0;
   const urls = [];
-  const fn = async (url) => {
+  const fn = async url => {
     urls.push(url);
     const response = responses[Math.min(call, responses.length - 1)];
     call += 1;
@@ -30,7 +30,7 @@ function jsonResponse(status, body, headers = {}) {
     ok: status >= 200 && status < 300,
     status,
     json: async () => body,
-    headers: { get: (name) => headers[name] ?? null },
+    headers: { get: name => headers[name] ?? null },
   };
 }
 
@@ -40,10 +40,7 @@ describe("routerEnvironment", () => {
     assert.equal(env.ANTHROPIC_BASE_URL, "https://router.weaveos.com");
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Router-Key: rk_test/);
     assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-Force-Cluster: low/);
-    assert.match(
-      env.ANTHROPIC_CUSTOM_HEADERS,
-      /X-Weave-User-Email: weave-checks@weaveos\.com/,
-    );
+    assert.match(env.ANTHROPIC_CUSTOM_HEADERS, /X-Weave-User-Email: weave-checks@weaveos\.com/);
     // A real Anthropic key here would put traffic on per-API billing instead
     // of the router's own accounting -- assert it's the placeholder, not a
     // plausible sk- key, so a future edit can't quietly introduce per-API spend.
@@ -53,9 +50,7 @@ describe("routerEnvironment", () => {
 
 describe("routerSessionCost", () => {
   it("takes a session ID and looks up the cost", async () => {
-    const fetchFn = fakeFetch([
-      jsonResponse(200, { actual_cost_usd_micros: 23418 }),
-    ]);
+    const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 23418 })]);
     const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
     });
@@ -138,7 +133,7 @@ describe("routerSessionCost", () => {
     const sleeps = [];
     const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
-      sleepFn: async (ms) => {
+      sleepFn: async ms => {
         sleeps.push(ms);
       },
       // The fixed ladder's second entry is 250ms -- if the hint is ignored
@@ -161,7 +156,7 @@ describe("routerSessionCost", () => {
     const sleeps = [];
     const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
-      sleepFn: async (ms) => {
+      sleepFn: async ms => {
         sleeps.push(ms);
       },
       retryDelaysMs: [0, 250],
@@ -180,7 +175,7 @@ describe("routerSessionCost", () => {
     const sleeps = [];
     const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
-      sleepFn: async (ms) => {
+      sleepFn: async ms => {
         sleeps.push(ms);
       },
       retryDelaysMs: [0, 250],
@@ -198,7 +193,7 @@ describe("routerSessionCost", () => {
     const sleeps = [];
     const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
-      sleepFn: async (ms) => {
+      sleepFn: async ms => {
         sleeps.push(ms);
       },
       retryDelaysMs: [0, 250],
@@ -218,7 +213,7 @@ describe("routerSessionCost", () => {
     const sleeps = [];
     const { cost } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
-      sleepFn: async (ms) => {
+      sleepFn: async ms => {
         sleeps.push(ms);
       },
       retryDelaysMs: [0, 250, 500],
@@ -254,10 +249,8 @@ describe("routerSessionCost", () => {
     assert.match(error, /actual_cost_usd_micros/);
   });
 
-  it("resolves cost for a session that hit --max-budget-usd -- the CLI's own subtype doesn't matter here", async () => {
-    const fetchFn = fakeFetch([
-      jsonResponse(200, { actual_cost_usd_micros: 2_000_000 }),
-    ]);
+  it("resolves cost for a session that exits after producing a session ID", async () => {
+    const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 2_000_000 })]);
     const { cost, error } = await routerSessionCost(SESSION_ID, WEAVE_API_KEY, {
       fetchFn,
     });
@@ -323,7 +316,12 @@ describe("weaveRouterProvider", () => {
   // already rides in a header; a direct Anthropic credential would compete
   // with the router placeholder.
   it("keeps both Weave secrets and direct Anthropic credentials out of the child", () => {
-    for (const name of ["WEAVE_ROUTER_KEY", "WEAVE_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+    for (const name of [
+      "WEAVE_ROUTER_KEY",
+      "WEAVE_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ]) {
       assert.ok(provider().dropEnv.includes(name), name);
     }
   });
@@ -348,7 +346,10 @@ describe("weaveRouterProvider", () => {
   });
 
   it("requires both keys", () => {
-    assert.throws(() => weaveRouterProvider({ weaveAPIKey: WEAVE_API_KEY }), /requires WEAVE_ROUTER_KEY/);
+    assert.throws(
+      () => weaveRouterProvider({ weaveAPIKey: WEAVE_API_KEY }),
+      /requires WEAVE_ROUTER_KEY/,
+    );
     assert.throws(() => weaveRouterProvider({ routerKey: ROUTER_KEY }), /requires WEAVE_API_KEY/);
   });
 });

@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -117,7 +111,7 @@ describe("readConfig", () => {
     assert.equal(config.stat, STAT);
     assert.equal(config.schemaText, '{"type":"object"}');
     assert.deepEqual(
-      config.checks.map((check) => check.slug),
+      config.checks.map(check => check.slug),
       ["first-check", "second-check"],
     );
   });
@@ -147,7 +141,8 @@ describe("readConfig", () => {
 
   it("fails before any agent runs when weave-router lacks a key", () => {
     assert.throws(
-      () => readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" }).env),
+      () =>
+        readConfig(fixture({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" }).env),
       /requires WEAVE_API_KEY/,
     );
   });
@@ -185,15 +180,23 @@ describe("runChecks", () => {
     const seen = [];
 
     const summary = await runChecks(config, {
-      evaluate: async ({ check, diff, stat, addedLines, settingSources, settingsPath, provider }) => {
+      evaluate: async ({
+        check,
+        diff,
+        stat,
+        addedLines,
+        settingSources,
+        settingsPath,
+        provider,
+      }) => {
         seen.push({ slug: check.slug, settingSources, settingsPath, provider });
         assert.equal(diff, DIFF);
         assert.equal(stat, STAT);
         // The diff is parsed once and shared, so a suggestion's line can be
         // validated against exactly the lines this diff added.
         assert.deepEqual([...addedLines.get("app/main.go")], [1, 2]);
-        return check.slug === "first-check"
-          ? {
+        return check.slug === "first-check" ?
+            {
               outcome: OUTCOME.FAIL,
               reason: "line one is bad",
               accepted: [
@@ -216,7 +219,7 @@ describe("runChecks", () => {
     });
 
     assert.deepEqual(
-      seen.map((entry) => entry.slug),
+      seen.map(entry => entry.slug),
       ["first-check", "second-check"],
     );
     // Under the default inherit provider, local runs must load the engineer's
@@ -263,7 +266,6 @@ describe("runChecks", () => {
     assert.equal(artifact.reason, "line one is bad");
   });
 
-
   it("uses each check's intelligence as the generated settings filename", async () => {
     const { env, tempDir } = fixture();
     env.SETTINGS_DIR = path.join(tempDir, "settings");
@@ -277,10 +279,13 @@ describe("runChecks", () => {
       },
     });
 
-    assert.deepEqual(seen.map(({ intelligence, settingsPath }) => [intelligence, settingsPath]), [
-      ["low", path.join(config.settingsDir, "settings-low.json")],
-      ["medium", path.join(config.settingsDir, "settings-medium.json")],
-    ]);
+    assert.deepEqual(
+      seen.map(({ intelligence, settingsPath }) => [intelligence, settingsPath]),
+      [
+        ["low", path.join(config.settingsDir, "settings-low.json")],
+        ["medium", path.join(config.settingsDir, "settings-medium.json")],
+      ],
+    );
     assert.deepEqual(seen[0].dropEnv, [
       "WEAVE_API_KEY",
       "ANTHROPIC_BASE_URL",
@@ -333,7 +338,7 @@ describe("runChecks", () => {
       evaluate: async () => {
         inFlight += 1;
         peak = Math.max(peak, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 1));
+        await new Promise(resolve => setTimeout(resolve, 1));
         inFlight -= 1;
         return passResult("fine");
       },

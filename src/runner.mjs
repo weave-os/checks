@@ -77,7 +77,6 @@ export async function runClaude({
   cluster = null,
   schemaText,
   promptText,
-  maxBudget,
   repoDir,
   tempDir,
   provider = null,
@@ -124,16 +123,9 @@ export async function runClaude({
     // per-cluster overlay); CI never does.
     ...(settingsPath === null ? [] : ["--settings", settingsPath]),
     "--no-session-persistence",
-    "--max-budget-usd",
-    // Enforced by the CLI against its own local estimate, which a routing
-    // provider makes approximate. Kept anyway: it is the only in-process
-    // runaway guard, and an approximate ceiling on a wedged agent is worth
-    // more than no ceiling. The number reported to the caller is the
-    // provider's.
-    maxBudget,
   ];
 
-  const processResult = await new Promise((resolve) => {
+  const processResult = await new Promise(resolve => {
     // The provider's `dropEnv` names variables the coordinator needs but the
     // CLI child does not (Weave Router drops the Weave API key, which only
     // the post-run cost lookup uses). Scrubbing is simpler here than
@@ -150,18 +142,14 @@ export async function runClaude({
 
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", chunk => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr.on("data", chunk => {
       stderr += chunk;
     });
-    child.on("error", (error) =>
-      resolve({ code: -1, stdout, stderr: `${stderr}${error.message}` }),
-    );
-    child.on("close", (exitCode) =>
-      resolve({ code: exitCode ?? -1, stdout, stderr }),
-    );
+    child.on("error", error => resolve({ code: -1, stdout, stderr: `${stderr}${error.message}` }));
+    child.on("close", exitCode => resolve({ code: exitCode ?? -1, stdout, stderr }));
     child.stdin.end(readFileSync(promptPath));
   });
 
@@ -182,9 +170,9 @@ export async function runClaude({
   // cost with no error, since "we chose not to ask" is not a failure the
   // caller should surface as one.
   const { cost, error } =
-    provider === null
-      ? { cost: null, error: null }
-      : await provider.resolveCost({ sessionId, resultEvent, model, cluster });
+    provider === null ?
+      { cost: null, error: null }
+    : await provider.resolveCost({ sessionId, resultEvent, model, cluster });
   if (error !== null) {
     onCostError?.({ slug, suffix, error });
   }
@@ -293,22 +281,17 @@ export function decodeAgentInvocation(invocation, { label }) {
 // bare code.
 function exitError(invocation, label = "Claude CLI") {
   const detail =
-    typeof invocation.cli?.result === "string" && invocation.cli.result.trim() !== ""
-      ? `: ${invocation.cli.result.trim().split("\n")[0].slice(0, 200)}`
-      : "";
+    typeof invocation.cli?.result === "string" && invocation.cli.result.trim() !== "" ?
+      `: ${invocation.cli.result.trim().split("\n")[0].slice(0, 200)}`
+    : "";
   return `${label} exited ${invocation.code}${detail}`;
 }
 
 export function normalize(invocation, addedLines) {
   if (invocation.code !== 0) {
-    // A non-zero exit doesn't necessarily mean the agent spent nothing --
-    // `--max-budget-usd` exits 1 after the tokens were already billed, and the
-    // provider recorded that spend regardless of how the CLI terminated. Read
-    // the cost the same way every other path does rather than reporting a run
-    // that hit budget as free. The session ID still arrived via the
-    // stream-json events before the crash, so the cost is almost always
-    // resolvable here -- the unanswered case is reserved for true CLI
-    // failures (exit -1, child.on('error')).
+    // A non-zero exit may still have spent tokens before the CLI terminated.
+    // Read the cost the same way every other path does rather than reporting a
+    // failed invocation as free.
     return {
       outcome: OUTCOME.NEUTRAL,
       error: exitError(invocation),
@@ -341,10 +324,9 @@ export function normalize(invocation, addedLines) {
     // `undefined`, so sumFiniteNumbers() recognizes it as an unknown component
     // rather than silently skipping it.
     const cost = invocationCost(invocation);
-    const duration =
-      typeof cli?.duration_ms === "number" ? cli.duration_ms : null;
-    return interpreted.outcome === INTERPRET_OUTCOME.RETRYABLE
-      ? {
+    const duration = typeof cli?.duration_ms === "number" ? cli.duration_ms : null;
+    return interpreted.outcome === INTERPRET_OUTCOME.RETRYABLE ?
+        {
           outcome: OUTCOME.NEUTRAL,
           ...interpreted.value,
           retryable: true,
@@ -416,13 +398,7 @@ export function validateAndFinalize(resultObject, invocation, cli, addedLines) {
 // since a local run has no prior comments to repeat.
 export function promptFor(
   check,
-  {
-    repoDir,
-    diff,
-    stat,
-    historySection = null,
-    productName = DEFAULT_BRANDING.productName,
-  },
+  { repoDir, diff, stat, historySection = null, productName = DEFAULT_BRANDING.productName },
 ) {
   const criteria = readFileSync(path.join(repoDir, check.path), "utf8");
   return [
@@ -453,27 +429,22 @@ export function promptFor(
     '  do not funnel a genuine match into a "noted but passing" verdict just',
     "  because the example looks minor. Otherwise the same check can flip-flop",
     "  on byte-identical lines across runs.",
-    ...(historySection === null
-      ? []
-      : [
-          "- Do NOT repeat a finding that matches one already listed under",
-          '  "Previously flagged issues" below -- it has already been reported on this PR, including',
-          "  any marked (already resolved): a human dismissed it, and that stands even if the",
-          "  underlying code was never actually changed.",
-        ]),
+    ...(historySection === null ?
+      []
+    : [
+        "- Do NOT repeat a finding that matches one already listed under",
+        '  "Previously flagged issues" below -- it has already been reported on this PR, including',
+        "  any marked (already resolved): a human dismissed it, and that stands even if the",
+        "  underlying code was never actually changed.",
+      ]),
     "",
     "## Review criteria",
     "",
     criteria,
     "",
-    ...(historySection === null
-      ? []
-      : [
-          "## Previously flagged issues by this check on this PR",
-          "",
-          historySection,
-          "",
-        ]),
+    ...(historySection === null ?
+      []
+    : ["## Previously flagged issues by this check on this PR", "", historySection, ""]),
     "## Changed files",
     "",
     "```",
@@ -515,7 +486,6 @@ export async function evaluateCheck({
   settingSources,
   settingsPath = null,
   dropEnv,
-  maxBudget = "2",
   onAttempt,
   onCostError,
 }) {
@@ -527,7 +497,6 @@ export async function evaluateCheck({
       cluster: check.cluster,
       schemaText,
       promptText: promptFor(check, { repoDir, diff, stat, historySection, productName }),
-      maxBudget,
       repoDir,
       tempDir,
       provider,
@@ -551,16 +520,14 @@ export async function evaluateCheck({
   // small jittered pause spreads them out. The range is short on purpose --
   // this is not a multi-attempt ladder, just one retry of a single agent
   // call.
-  await new Promise((resolve) =>
-    setTimeout(resolve, 250 + Math.random() * 250),
-  );
+  await new Promise(resolve => setTimeout(resolve, 250 + Math.random() * 250));
   const retryInvocation = await invoke();
   onAttempt?.("Main review (retry)", retryInvocation);
   const retryResult = normalize(retryInvocation, addedLines);
   return {
     ...retryResult,
-    // Both invocations consumed budget. Preserve the retry's verdict and
-    // diagnostics while accounting for all primary-agent execution.
+    // Preserve the retry's verdict and diagnostics while accounting for all
+    // primary-agent execution.
     cost: totalCost([normalizedResult.cost, retryResult.cost]),
     duration: totalDuration([normalizedResult.duration, retryResult.duration]),
   };
@@ -625,14 +592,12 @@ export function totalDuration(values) {
 }
 
 export function formatUsd(value) {
-  if (value === null || value === undefined || !Number.isFinite(value))
-    return "—";
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `$${value.toFixed(2)}`;
 }
 
 export function formatDuration(ms) {
-  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms <= 0)
-    return "—";
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms <= 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) {
@@ -653,15 +618,12 @@ export function formatDuration(ms) {
 export async function runPool(items, concurrency, run) {
   const results = new Array(items.length);
   const queue = items.map((item, index) => ({ item, index }));
-  const workers = Array.from(
-    { length: Math.min(concurrency, queue.length) },
-    async () => {
-      while (queue.length > 0) {
-        const { item, index } = queue.shift();
-        results[index] = await run(item);
-      }
-    },
-  );
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const { item, index } = queue.shift();
+      results[index] = await run(item);
+    }
+  });
   await Promise.all(workers);
   return results;
 }

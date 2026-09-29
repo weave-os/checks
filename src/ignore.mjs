@@ -48,9 +48,9 @@ function main() {
   const { ignorePath, pathspecs } = result;
   // Diagnostics on stderr: stdout is consumed as the pathspec list itself.
   console.error(
-    pathspecs.length === 0
-      ? `no ignored paths in ${ignorePath}`
-      : `ignoring ${pathspecs.length} path(s) from ${ignorePath}: ${pathspecs.join(" ")}`,
+    pathspecs.length === 0 ?
+      `no ignored paths in ${ignorePath}`
+    : `ignoring ${pathspecs.length} path(s) from ${ignorePath}: ${pathspecs.join(" ")}`,
   );
   for (const pathspec of pathspecs) {
     console.log(pathspec);

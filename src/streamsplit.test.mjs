@@ -88,11 +88,7 @@ describe("splitStreamJson", () => {
 
   it("treats valid-JSON non-object values as not-an-event", () => {
     // Defensive: a stray `"foo"` line should not turn `foo` into a session id.
-    const stdout = [
-      '"just-a-string"',
-      event("result", { subtype: "success" }),
-      "",
-    ].join("\n");
+    const stdout = ['"just-a-string"', event("result", { subtype: "success" }), ""].join("\n");
     const { resultEvent, sessionId } = splitStreamJson(stdout);
     assert.equal(resultEvent.subtype, "success");
     assert.equal(sessionId, SESSION_ID);
@@ -203,10 +199,7 @@ describe("summarizeTranscript", () => {
       usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 5000 },
     });
     const summary = summarizeTranscript(line);
-    assert.equal(
-      summary,
-      "Result · success · 6 turns · 100 input · 20 output · 5,000 cache read",
-    );
+    assert.equal(summary, "Result · success · 6 turns · 100 input · 20 output · 5,000 cache read");
   });
 
   it("renders a minimal terminal result without the cost field", () => {
@@ -217,10 +210,7 @@ describe("summarizeTranscript", () => {
       usage: { input_tokens: 2, output_tokens: 302, cache_read_input_tokens: 0 },
     });
     const summary = summarizeTranscript(line);
-    assert.equal(
-      summary,
-      "Result · success · 2 turns · 2 input · 302 output",
-    );
+    assert.equal(summary, "Result · success · 2 turns · 2 input · 302 output");
   });
 
   it("keeps an unparseable line visible rather than silently dropping it", () => {
@@ -318,7 +308,10 @@ describe("formatTranscriptSection", () => {
     const block = formatTranscriptSection("Reviewer", [
       { label: "Main review", sessionId: SESSION_ID, text: huge },
     ]);
-    assert.match(block, /... truncated, \d{1,3}(,\d{3})* steps? omitted\. Full transcript is in the workflow diagnostics artifact\./);
+    assert.match(
+      block,
+      /... truncated, \d{1,3}(,\d{3})* steps? omitted\. Full transcript is in the workflow diagnostics artifact\./,
+    );
     // The capped block, when measured as UTF-8 bytes, fits under
     // TRANSCRIPT_SECTION_MAX_BYTES with a hard ceiling of its own --
     // overshoot means the helper is leaking through-the-budget lines.
@@ -382,9 +375,15 @@ describe("formatTranscriptSection", () => {
   });
 
   it("labels a client-reported cost as such, and an unlabelled one as plain cost", () => {
-    const render = (costLabel) =>
+    const render = costLabel =>
       formatTranscriptSection("Reviewer", [
-        { label: "Main review", sessionId: SESSION_ID, cost: 0.1, costLabel, text: event("result", { subtype: "success" }) },
+        {
+          label: "Main review",
+          sessionId: SESSION_ID,
+          cost: 0.1,
+          costLabel,
+          text: event("result", { subtype: "success" }),
+        },
       ]);
     assert.match(render("client-reported cost"), /· client-reported cost \$0\.10/);
     assert.match(render(undefined), /· cost \$0\.10/);
@@ -429,7 +428,10 @@ describe("formatTranscriptSection", () => {
       { label: "Main review", sessionId: SESSION_ID, text: fitted.join("\n") },
     ]);
     // One event was dropped. The marker must use the singular noun form.
-    assert.match(block, /\b1 step omitted\. Full transcript is in the workflow diagnostics artifact\./);
+    assert.match(
+      block,
+      /\b1 step omitted\. Full transcript is in the workflow diagnostics artifact\./,
+    );
     assert.doesNotMatch(block, /\b1 steps omitted/);
   });
 
@@ -453,7 +455,10 @@ describe("formatTranscriptSection", () => {
     const block = formatTranscriptSection("Reviewer", [
       { label: "Main review", sessionId: SESSION_ID, text: fitted.join("\n") },
     ]);
-    assert.match(block, /\b(\d{1,3}(,\d{3})*) steps omitted\. Full transcript is in the workflow diagnostics artifact\./);
+    assert.match(
+      block,
+      /\b(\d{1,3}(,\d{3})*) steps omitted\. Full transcript is in the workflow diagnostics artifact\./,
+    );
     assert.doesNotMatch(block, /\b1 step omitted/);
   });
 
@@ -479,12 +484,17 @@ describe("formatTranscriptSection", () => {
       { label: "Main review", sessionId: SESSION_ID, text: stdout },
     ]);
     // Truncation marker is present, with correct pluralization.
-    assert.match(block, /steps omitted\. Full transcript is in the workflow diagnostics artifact\./);
+    assert.match(
+      block,
+      /steps omitted\. Full transcript is in the workflow diagnostics artifact\./,
+    );
     // The result line is rendered AFTER the marker on the same fenced code block.
     const markerIndex = block.indexOf("steps omitted. Full transcript");
     const resultIndex = block.indexOf("Result · success");
-    assert.ok(resultIndex > markerIndex && resultIndex !== -1,
-      `expected "Result · success" to appear after the truncation marker; marker at ${markerIndex}, result at ${resultIndex}`);
+    assert.ok(
+      resultIndex > markerIndex && resultIndex !== -1,
+      `expected "Result · success" to appear after the truncation marker; marker at ${markerIndex}, result at ${resultIndex}`,
+    );
   });
 
   it("does not double-count the trailing result line in the omit total", () => {
@@ -526,7 +536,10 @@ describe("formatTranscriptSection", () => {
     const block = formatTranscriptSection("Reviewer", [
       { label: "Main review", sessionId: SESSION_ID, text: finalText },
     ]);
-    assert.match(block, /\b1 step omitted\. Full transcript is in the workflow diagnostics artifact\./);
+    assert.match(
+      block,
+      /\b1 step omitted\. Full transcript is in the workflow diagnostics artifact\./,
+    );
     assert.match(block, /Result · success · 4 turns · 5 input · 6 output/);
   });
 

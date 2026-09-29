@@ -30,7 +30,9 @@
     "node": ">=20.3"
   },
   "scripts": {
-    "test": "node --test src/*.test.mjs"
+    "test": "node --test src/*.test.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [
     "code-review",
@@ -38,5 +40,8 @@
     "claude",
     "ai",
     "pull-request"
-  ]
+  ],
+  "devDependencies": {
+    "prettier": "^3.9.9"
+  }
 }

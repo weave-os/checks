@@ -86,7 +86,7 @@ const DEFAULT_SLEEP = (ms, abortSignal) => {
   // deliberate choice: requestWithRetry checks callerSignal.aborted right
   // after, so a synthetic "done" doesn't actually let another attempt run.
   if (abortSignal?.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const timer = setTimeout(() => {
       abortSignal?.removeEventListener("abort", onAbort);
       resolve();
@@ -126,13 +126,11 @@ export function isRetryableStatus(status, bodyText = "") {
 
 export function isRetryableGraphQLErrors(errors) {
   if (!Array.isArray(errors) || errors.length === 0) return false;
-  return errors.some((error) => {
+  return errors.some(error => {
     if (RETRYABLE_GRAPHQL_TYPES.has(error?.type)) return true;
     const message = typeof error?.message === "string" ? error.message : "";
     const lowered = message.toLowerCase();
-    return RETRYABLE_GRAPHQL_MESSAGES.some((needle) =>
-      lowered.includes(needle),
-    );
+    return RETRYABLE_GRAPHQL_MESSAGES.some(needle => lowered.includes(needle));
   });
 }
 
@@ -159,7 +157,7 @@ export function isRetryableGraphQLBody(text) {
 // `x-ratelimit-remaining: 0` plus `x-ratelimit-reset` (absolute epoch seconds)
 // is the primary rate limit, which has no Retry-After.
 export function retryAfterMs(headers, nowMs = Date.now()) {
-  const read = (name) => {
+  const read = name => {
     const value = headers?.get?.(name);
     return value === null || value === undefined || value === "" ? null : value;
   };
@@ -206,7 +204,7 @@ export async function requestWithRetry(
     timeoutMs = REQUEST_TIMEOUT_MS,
     randomFn = Math.random,
     nowFn = Date.now,
-    logFn = (message) => console.error(message),
+    logFn = message => console.error(message),
     // What to call this request in retry logs. The caller passes something
     // human-readable ("PATCH repos/o/r/check-runs/123") because a bare URL in
     // a job log doesn't say which check was talking.
@@ -217,11 +215,10 @@ export async function requestWithRetry(
   } = {},
 ) {
   const callerSignal = init?.signal ?? undefined;
-  const initWithoutSignal = callerSignal === undefined
-    ? init
-    : Object.fromEntries(
-        Object.entries(init).filter(([key]) => key !== "signal"),
-      );
+  const initWithoutSignal =
+    callerSignal === undefined ? init : (
+      Object.fromEntries(Object.entries(init).filter(([key]) => key !== "signal"))
+    );
   const maxAttempts = retryDelaysMs.length;
   let lastTransportError = null;
   // The most recent actual HTTP response, even one the ladder decided to
@@ -250,9 +247,8 @@ export async function requestWithRetry(
     let text = null;
     try {
       const timeoutSignal = AbortSignal.timeout(timeoutMs);
-      const combinedSignal = callerSignal
-        ? AbortSignal.any([callerSignal, timeoutSignal])
-        : timeoutSignal;
+      const combinedSignal =
+        callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
       response = await fetchFn(url, {
         ...initWithoutSignal,
         signal: combinedSignal,
@@ -270,8 +266,9 @@ export async function requestWithRetry(
     }
 
     if (response !== null) {
-      const retryable = response.ok
-        ? shouldRetryResponse !== null && shouldRetryResponse(text)
+      const retryable =
+        response.ok ?
+          shouldRetryResponse !== null && shouldRetryResponse(text)
         : isRetryableStatus(response.status, text);
       const result = {
         ok: response.ok,
@@ -290,8 +287,7 @@ export async function requestWithRetry(
       }
       lastResponse = result;
       nextDelayMs =
-        retryAfterMs(response.headers, nowFn()) ??
-        jitter(retryDelaysMs[attempt], randomFn);
+        retryAfterMs(response.headers, nowFn()) ?? jitter(retryDelaysMs[attempt], randomFn);
       logFn(
         `Weave Checks: ${label} returned HTTP ${response.status}; retrying in ${Math.round(nextDelayMs)}ms (attempt ${attempt}/${maxAttempts})`,
       );
@@ -323,8 +319,5 @@ export async function requestWithRetry(
 // maxAttempts would otherwise produce NaN and sleep forever.
 function jitter(baseDelayMs, randomFn) {
   if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) return 0;
-  return (
-    baseDelayMs *
-    (1 - RETRY_JITTER_FRACTION + randomFn() * RETRY_JITTER_FRACTION)
-  );
+  return baseDelayMs * (1 - RETRY_JITTER_FRACTION + randomFn() * RETRY_JITTER_FRACTION);
 }

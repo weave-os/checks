@@ -38,9 +38,7 @@ export const MODEL_FOR_INTELLIGENCE = Object.freeze({
 });
 
 export function modelForIntelligence(intelligence) {
-  return SUPPORTED_INTELLIGENCE.has(intelligence)
-    ? MODEL_FOR_INTELLIGENCE[intelligence]
-    : null;
+  return SUPPORTED_INTELLIGENCE.has(intelligence) ? MODEL_FOR_INTELLIGENCE[intelligence] : null;
 }
 
 // Files in a checks directory that are documentation, not checks, unless a
@@ -99,12 +97,11 @@ function parseFrontmatter(text) {
       throw new Error(`malformed frontmatter line: ${rawLine}`);
     }
     if (!FRONTMATTER_KEYS.has(key)) {
-      throw new Error(`unknown frontmatter key "${key}" (allowed: ${[...FRONTMATTER_KEYS].sort().join(", ")})`);
+      throw new Error(
+        `unknown frontmatter key "${key}" (allowed: ${[...FRONTMATTER_KEYS].sort().join(", ")})`,
+      );
     }
-    if (
-      /^["'[{>|&*!%@`]/.test(value) ||
-      /(?:^|\s)#/.test(value)
-    ) {
+    if (/^["'[{>|&*!%@`]/.test(value) || /(?:^|\s)#/.test(value)) {
       throw new Error(
         `${rawLine}: frontmatter values must be unquoted single-line scalars without comments or YAML structures`,
       );
@@ -170,7 +167,7 @@ export function parseIgnoreList(text) {
       const prefix = pattern.slice(0, wildcard.index);
       // `.` and `./` name the repository root, so `./*` is still an
       // unanchored wildcard even though the prefix contains a slash.
-      const prefixSegments = prefix.split("/").filter((segment) => segment !== "" && segment !== ".");
+      const prefixSegments = prefix.split("/").filter(segment => segment !== "" && segment !== ".");
       if (prefixSegments.length === 0 || !prefix.includes("/")) {
         throw new Error(
           `"${line}" contains an unanchored wildcard: wildcards require a literal directory prefix`,
@@ -194,7 +191,7 @@ export function parseIgnoreList(text) {
 // after a `-- .` pathspec, which is what narrows the diff to "the whole tree
 // except these".
 export function ignorePathspecs(patterns) {
-  return patterns.map((pattern) => `:(exclude)${pattern}`);
+  return patterns.map(pattern => `:(exclude)${pattern}`);
 }
 
 // Parses one check file into a matrix entry. Throws with the offending path so
@@ -255,17 +252,19 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
 // status on the PR.
 export function buildMatrix(files, policy = WEAVE_POLICY) {
   const checks = files
-    .filter((file) => isCheckFile(file.path, policy.docFiles ?? DEFAULT_DOC_FILES))
-    .map((file) => parseCheckFile(file.text, file.path, policy))
-    .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+    .filter(file => isCheckFile(file.path, policy.docFiles ?? DEFAULT_DOC_FILES))
+    .map(file => parseCheckFile(file.text, file.path, policy))
+    .sort((a, b) =>
+      a.slug < b.slug ? -1
+      : a.slug > b.slug ? 1
+      : 0,
+    );
 
   const seen = new Map();
   for (const check of checks) {
     const existing = seen.get(check.name);
     if (existing !== undefined) {
-      throw new Error(
-        `duplicate check name "${check.name}" in ${existing} and ${check.path}`,
-      );
+      throw new Error(`duplicate check name "${check.name}" in ${existing} and ${check.path}`);
     }
     seen.set(check.name, check.path);
   }
@@ -278,7 +277,7 @@ export function buildMatrix(files, policy = WEAVE_POLICY) {
 // Builds a policy from caller-supplied intelligence values (the action's
 // input and CLI's flag). An empty or absent list accepts all four tiers.
 export function policyFrom({ allowedIntelligence = [], docFiles = [] } = {}) {
-  const unknown = allowedIntelligence.filter((value) => !SUPPORTED_INTELLIGENCE.has(value));
+  const unknown = allowedIntelligence.filter(value => !SUPPORTED_INTELLIGENCE.has(value));
   if (unknown.length > 0) {
     throw new Error(
       `unsupported intelligence in allowlist: ${unknown.join(", ")} (allowed: ${[...SUPPORTED_INTELLIGENCE].sort().join(", ")})`,
@@ -286,9 +285,7 @@ export function policyFrom({ allowedIntelligence = [], docFiles = [] } = {}) {
   }
   return Object.freeze({
     allowedIntelligence:
-      allowedIntelligence.length === 0
-        ? SUPPORTED_INTELLIGENCE
-        : new Set(allowedIntelligence),
+      allowedIntelligence.length === 0 ? SUPPORTED_INTELLIGENCE : new Set(allowedIntelligence),
     docFiles: docFiles.length === 0 ? DEFAULT_DOC_FILES : new Set(docFiles),
   });
 }
@@ -487,9 +484,9 @@ export function validateResult(result, addedLines) {
 // committable ```suggestion block; without one the comment is advisory prose.
 export function formatReviewComment(suggestion) {
   const body =
-    suggestion.replacement === undefined || suggestion.replacement === null
-      ? suggestion.comment
-      : `${suggestion.comment}\n\n\`\`\`suggestion\n${suggestion.replacement}\n\`\`\``;
+    suggestion.replacement === undefined || suggestion.replacement === null ?
+      suggestion.comment
+    : `${suggestion.comment}\n\n\`\`\`suggestion\n${suggestion.replacement}\n\`\`\``;
 
   const comment = { path: suggestion.file, line: suggestion.line, body };
   if (suggestion.start_line < suggestion.line) {
@@ -565,9 +562,7 @@ export function formatReviewedMarker(sha) {
 // which is precisely what must not advance the base.
 export function everyCheckReviewed(states) {
   if (states.length === 0) return false;
-  return states.every(
-    (state) => state.outcome === OUTCOME.PASS || state.outcome === OUTCOME.FAIL,
-  );
+  return states.every(state => state.outcome === OUTCOME.PASS || state.outcome === OUTCOME.FAIL);
 }
 
 // Closed set of `cli.subtype` values the Claude CLI emits on a terminal
@@ -725,23 +720,36 @@ function extractBalancedJsonObject(text, startIndex) {
 }
 
 export function interpretResult(cli) {
-  if (!cli || typeof cli !== "object" || cli.is_error === true || cli.subtype !== CLI_RESULT_SUBTYPE.SUCCESS) {
-    return { outcome: INTERPRET_OUTCOME.DEFINITE, value: { error: `Claude reported ${cli?.subtype ?? cli?.api_error_status ?? "an error"}` } };
+  if (
+    !cli ||
+    typeof cli !== "object" ||
+    cli.is_error === true ||
+    cli.subtype !== CLI_RESULT_SUBTYPE.SUCCESS
+  ) {
+    return {
+      outcome: INTERPRET_OUTCOME.DEFINITE,
+      value: { error: `Claude reported ${cli?.subtype ?? cli?.api_error_status ?? "an error"}` },
+    };
   }
 
   let resultObject;
   try {
     resultObject = parseStructuredOutput(cli);
   } catch (error) {
-    return { outcome: INTERPRET_OUTCOME.DEFINITE, value: { error: `structured_output was a string but was not valid JSON: ${error.message}` } };
+    return {
+      outcome: INTERPRET_OUTCOME.DEFINITE,
+      value: { error: `structured_output was a string but was not valid JSON: ${error.message}` },
+    };
   }
 
   if (resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)) {
     return { outcome: INTERPRET_OUTCOME.OK, value: resultObject };
   }
 
-  const matchedStart = typeof cli.result === "string" ? cli.result.match(VERDICT_START_REGEX) : null;
-  const matched = matchedStart !== null ? extractBalancedJsonObject(cli.result, matchedStart.index) : null;
+  const matchedStart =
+    typeof cli.result === "string" ? cli.result.match(VERDICT_START_REGEX) : null;
+  const matched =
+    matchedStart !== null ? extractBalancedJsonObject(cli.result, matchedStart.index) : null;
   if (matched !== null) {
     try {
       return { outcome: INTERPRET_OUTCOME.OK, value: JSON.parse(matched) };
@@ -749,7 +757,8 @@ export function interpretResult(cli) {
       return {
         outcome: INTERPRET_OUTCOME.RETRYABLE,
         value: {
-          error: "structured_output was missing and the prose result did not contain a verdict JSON object",
+          error:
+            "structured_output was missing and the prose result did not contain a verdict JSON object",
           rawResult: cli.result,
         },
       };

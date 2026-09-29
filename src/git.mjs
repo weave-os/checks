@@ -15,7 +15,9 @@ const MAX_BUFFER_BYTES = 512 * 1024 * 1024;
 export class GitError extends Error {
   constructor(args, result) {
     const stderr = result.stderr?.toString("utf8").trim() ?? "";
-    super(`git ${args.join(" ")} failed (${result.error?.message ?? `exit ${result.status}`})${stderr === "" ? "" : `: ${stderr}`}`);
+    super(
+      `git ${args.join(" ")} failed (${result.error?.message ?? `exit ${result.status}`})${stderr === "" ? "" : `: ${stderr}`}`,
+    );
     this.name = "GitError";
     this.status = result.status;
     this.stderr = stderr;

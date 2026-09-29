@@ -44,7 +44,12 @@ export function repoRoot(cwd) {
 }
 
 export function refExists(repoDir, ref, { git = defaultGit } = {}) {
-  return git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { cwd: repoDir, allowFailure: true }) !== null;
+  return (
+    git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      cwd: repoDir,
+      allowFailure: true,
+    }) !== null
+  );
 }
 
 // The commit the diff is taken from. Defaults to the merge base, because that
@@ -55,9 +60,17 @@ export function refExists(repoDir, ref, { git = defaultGit } = {}) {
 // Only the default base falls back: an explicit base is taken at face value,
 // so a typo surfaces as a git error rather than a silent diff against
 // something else.
-export function resolveDiffBase({ repoDir, base = DEFAULT_BASE, useMergeBase = true, head = "HEAD", git = defaultGit }) {
-  const ref = base === DEFAULT_BASE && !refExists(repoDir, DEFAULT_BASE, { git }) ? FALLBACK_BASE : base;
-  const args = useMergeBase ? ["merge-base", ref, head] : ["rev-parse", "--verify", `${ref}^{commit}`];
+export function resolveDiffBase({
+  repoDir,
+  base = DEFAULT_BASE,
+  useMergeBase = true,
+  head = "HEAD",
+  git = defaultGit,
+}) {
+  const ref =
+    base === DEFAULT_BASE && !refExists(repoDir, DEFAULT_BASE, { git }) ? FALLBACK_BASE : base;
+  const args =
+    useMergeBase ? ["merge-base", ref, head] : ["rev-parse", "--verify", `${ref}^{commit}`];
   return git(args, { cwd: repoDir }).toString("utf8").trim();
 }
 
@@ -71,7 +84,8 @@ export function repoRelativePathspec(repoDir, target) {
         "Pick a subdirectory or a path outside the repository.",
     );
   }
-  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    return null;
   return relative.split(path.sep).join("/");
 }
 
@@ -79,7 +93,9 @@ function isGitIgnored(git, repoDir, pathspec, env) {
   // check-ignore answers with its exit code (0 ignored, 1 not). It consults
   // the index as well, so a force-tracked path inside an ignored directory
   // reads as not ignored.
-  return git(["check-ignore", "-q", "--", pathspec], { cwd: repoDir, env, allowFailure: true }) !== null;
+  return (
+    git(["check-ignore", "-q", "--", pathspec], { cwd: repoDir, env, allowFailure: true }) !== null
+  );
 }
 
 // Writes `pr.diff` and `pr.stat` for base..working-tree into `outDir`.
@@ -96,8 +112,8 @@ export function writeWorkingTreeDiff({
 }) {
   // Resolve exclusions first, so a bad path fails before any git state exists.
   const excluded = excludePaths
-    .map((target) => repoRelativePathspec(repoDir, target))
-    .filter((pathspec) => pathspec !== null);
+    .map(target => repoRelativePathspec(repoDir, target))
+    .filter(pathspec => pathspec !== null);
 
   // Outside the repository, so no snapshot can ever sweep it up (invariant 1).
   const scratchDir = mkdtempSync(path.join(os.tmpdir(), "weave-checks-index-"));
@@ -109,13 +125,19 @@ export function writeWorkingTreeDiff({
     // files") -- and .gitignore already keeps it out, so only unignored
     // exclusions are passed.
     const snapshotExcludes = excluded
-      .filter((pathspec) => !isGitIgnored(git, repoDir, pathspec, env))
-      .map((pathspec) => `:(exclude)${pathspec}`);
+      .filter(pathspec => !isGitIgnored(git, repoDir, pathspec, env))
+      .map(pathspec => `:(exclude)${pathspec}`);
     git(["add", "-A", "--", ".", ...snapshotExcludes], { cwd: repoDir, env });
     // -U0 matches CI: the agent reviews changed lines only, so context lines
     // would just invite comments that diff validation then drops.
-    const diff = git(["diff", "-U0", "--cached", base, "--", ".", ...ignorePathspecs], { cwd: repoDir, env });
-    const stat = git(["diff", "--cached", "--stat", base, "--", ".", ...ignorePathspecs], { cwd: repoDir, env });
+    const diff = git(["diff", "-U0", "--cached", base, "--", ".", ...ignorePathspecs], {
+      cwd: repoDir,
+      env,
+    });
+    const stat = git(["diff", "--cached", "--stat", base, "--", ".", ...ignorePathspecs], {
+      cwd: repoDir,
+      env,
+    });
     return writeDiffFiles(outDir, diff, stat);
   } finally {
     rmSync(scratchDir, { recursive: true, force: true });
@@ -124,7 +146,14 @@ export function writeWorkingTreeDiff({
 
 // Writes `pr.diff` and `pr.stat` for a committed range, e.g. to review a
 // branch that is already pushed without its working-tree noise.
-export function writeRangeDiff({ repoDir, base, head, outDir, ignorePathspecs = [], git = defaultGit }) {
+export function writeRangeDiff({
+  repoDir,
+  base,
+  head,
+  outDir,
+  ignorePathspecs = [],
+  git = defaultGit,
+}) {
   const diff = git(["diff", "-U0", base, head, "--", ".", ...ignorePathspecs], { cwd: repoDir });
   const stat = git(["diff", "--stat", base, head, "--", ".", ...ignorePathspecs], { cwd: repoDir });
   return writeDiffFiles(outDir, diff, stat);

@@ -12,7 +12,11 @@ import { fileURLToPath } from "node:url";
 import { git as realGit } from "./git.mjs";
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "cli.mjs");
-const FIXTURE_CHECKS = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "checks");
+const FIXTURE_CHECKS = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "checks",
+);
 
 const ROOTS = [];
 after(() => {
@@ -54,11 +58,15 @@ function workspace() {
   const repo = path.join(root, "repo");
   const bin = path.join(root, "bin");
   const fakeOut = path.join(root, "fake");
-  for (const dir of [repo, bin, fakeOut, path.join(repo, ".weave-checks")]) mkdirSync(dir, { recursive: true });
+  for (const dir of [repo, bin, fakeOut, path.join(repo, ".weave-checks")])
+    mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(bin, "claude"), FAKE_CLAUDE);
   chmodSync(path.join(bin, "claude"), 0o755);
   for (const name of ["alpha-check.md", "beta-check.md", "README.md"]) {
-    writeFileSync(path.join(repo, ".weave-checks", name), readFileSync(path.join(FIXTURE_CHECKS, name)));
+    writeFileSync(
+      path.join(repo, ".weave-checks", name),
+      readFileSync(path.join(FIXTURE_CHECKS, name)),
+    );
   }
   const git = (...args) => realGit(args, { cwd: repo, env: GIT_ENV });
   git("init", "-q", "-b", "main");
@@ -96,9 +104,24 @@ describe("weave-checks run", () => {
     const summary = JSON.parse(result.stdout);
     assert.equal(summary.provider, "inherit");
     assert.equal(summary.costLabel, "client-reported cost");
-    assert.deepEqual(summary.checks.map((c) => [c.slug, c.outcome]), [["alpha-check", "flagged"], ["beta-check", "pass"]]);
-    assert.deepEqual(summary.checks[0].suggestions.map((s) => `${s.file}:${s.line}`), ["app.js:1"]);
-    assert.deepEqual(summary.totals, { pass: 1, flagged: 1, neutral: 0, cost: 0.35, durationMs: 200 });
+    assert.deepEqual(
+      summary.checks.map(c => [c.slug, c.outcome]),
+      [
+        ["alpha-check", "flagged"],
+        ["beta-check", "pass"],
+      ],
+    );
+    assert.deepEqual(
+      summary.checks[0].suggestions.map(s => `${s.file}:${s.line}`),
+      ["app.js:1"],
+    );
+    assert.deepEqual(summary.totals, {
+      pass: 1,
+      flagged: 1,
+      neutral: 0,
+      cost: 0.35,
+      durationMs: 200,
+    });
   });
 
   it("exits 0 with --no-fail and renders a text table", () => {
@@ -107,7 +130,10 @@ describe("weave-checks run", () => {
     const result = space.cli(["run", "--base", "main", "--no-fail"]);
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Weave Checks — 1 passed · 1 flagged · 0 neutral — \$0\.35 total \(client-reported cost\)/);
+    assert.match(
+      result.stdout,
+      /Weave Checks — 1 passed · 1 flagged · 0 neutral — \$0\.35 total \(client-reported cost\)/,
+    );
     assert.match(result.stdout, /app\.js:1 Avoid alpha\./);
   });
 
@@ -115,7 +141,10 @@ describe("weave-checks run", () => {
     const space = workspace();
     const only = space.cli(["run", "--base", "main", "--only", "beta-check", "--format", "json"]);
     assert.equal(only.status, 0, only.stderr);
-    assert.deepEqual(JSON.parse(only.stdout).checks.map((c) => c.slug), ["beta-check"]);
+    assert.deepEqual(
+      JSON.parse(only.stdout).checks.map(c => c.slug),
+      ["beta-check"],
+    );
 
     const unknown = space.cli(["run", "--base", "main", "--only", "gamma"]);
     assert.equal(unknown.status, 2);
@@ -135,25 +164,34 @@ describe("weave-checks run", () => {
   it("needs no Weave secret for anthropic and never hands one to the agent", () => {
     const space = workspace();
 
-    const result = space.cli(["run", "--base", "main", "--provider", "anthropic", "--format", "json"], {
-      WEAVE_API_KEY: "wk-should-not-leak",
-      GITHUB_TOKEN: "ghs-should-not-leak",
-      WEAVE_CHECKS_PROVIDER_ENV: "ANTHROPIC_BASE_URL=https://gateway.example.com",
-    });
+    const result = space.cli(
+      ["run", "--base", "main", "--provider", "anthropic", "--format", "json"],
+      {
+        WEAVE_API_KEY: "wk-should-not-leak",
+        GITHUB_TOKEN: "ghs-should-not-leak",
+        WEAVE_CHECKS_PROVIDER_ENV: "ANTHROPIC_BASE_URL=https://gateway.example.com",
+      },
+    );
 
     assert.equal(result.status, 1, result.stderr);
     assert.equal(JSON.parse(result.stdout).provider, "anthropic");
     const envs = space.envs();
     // Plain boolean asserts: a failing match would print the whole recorded
     // environment into the test log.
-    assert.ok(/^ANTHROPIC_BASE_URL=https:\/\/gateway\.example\.com$/m.test(envs), "gateway overlay applied");
+    assert.ok(
+      /^ANTHROPIC_BASE_URL=https:\/\/gateway\.example\.com$/m.test(envs),
+      "gateway overlay applied",
+    );
     assert.ok(/^WEAVE_PROMPT_INITIATOR=automation$/m.test(envs), "initiator pinned");
     assert.ok(!envs.includes("should-not-leak"), "a coordinator-only secret reached the agent");
   });
 
   it("fails fast when weave-router is missing a key", () => {
     const space = workspace();
-    const result = space.cli(["run", "--base", "main", "--provider", "weave-router"], { WEAVE_ROUTER_KEY: "", WEAVE_API_KEY: "" });
+    const result = space.cli(["run", "--base", "main", "--provider", "weave-router"], {
+      WEAVE_ROUTER_KEY: "",
+      WEAVE_API_KEY: "",
+    });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /requires WEAVE_ROUTER_KEY/);
   });
@@ -161,7 +199,15 @@ describe("weave-checks run", () => {
   it("keeps an in-repo artifacts directory out of the reviewed diff", () => {
     const space = workspace();
 
-    const result = space.cli(["run", "--base", "main", "--artifacts-dir", "review-out", "--format", "json"]);
+    const result = space.cli([
+      "run",
+      "--base",
+      "main",
+      "--artifacts-dir",
+      "review-out",
+      "--format",
+      "json",
+    ]);
 
     assert.equal(result.status, 1, result.stderr);
     const diff = readFileSync(path.join(space.repo, "review-out", "pr.diff"), "utf8");
@@ -175,7 +221,10 @@ describe("weave-checks list", () => {
     const space = workspace();
     const ok = space.cli(["list"]);
     assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(ok.stdout, 'alpha-check: "Alpha Check" (intelligence low → haiku)\nbeta-check: "Beta Check" (intelligence medium → sonnet)\n');
+    assert.equal(
+      ok.stdout,
+      'alpha-check: "Alpha Check" (intelligence low → haiku)\nbeta-check: "Beta Check" (intelligence medium → sonnet)\n',
+    );
 
     writeFileSync(path.join(space.repo, ".weave-checks", "broken.md"), "no frontmatter\n");
     const bad = space.cli(["list"]);

@@ -7,22 +7,35 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 
-import {
-  exchangeForAppToken,
-  requestOidcToken,
-  revokeAppToken,
-} from "../src/apptoken.mjs";
+import { exchangeForAppToken, requestOidcToken, revokeAppToken } from "../src/apptoken.mjs";
 import { brandingFromEnv } from "../src/branding.mjs";
-import { closeAggregate, createAggregate, report, writeOutputs, writeStepSummary } from "../src/ci.mjs";
+import {
+  closeAggregate,
+  createAggregate,
+  report,
+  writeOutputs,
+  writeStepSummary,
+} from "../src/ci.mjs";
 import { DEFAULT_CHECKS_DIR, describeEntry, discoverChecks } from "../src/discover.mjs";
 import { createGitHubClient, permissionHint } from "../src/github.mjs";
 import { gitLine } from "../src/git.mjs";
-import { DEFAULT_BASE, repoRoot, resolveDiffBase, writeRangeDiff, writeWorkingTreeDiff } from "../src/gitdiff.mjs";
+import {
+  DEFAULT_BASE,
+  repoRoot,
+  resolveDiffBase,
+  writeRangeDiff,
+  writeWorkingTreeDiff,
+} from "../src/gitdiff.mjs";
 import { readIgnorePathspecs } from "../src/ignore.mjs";
 import { DEFAULT_LOCAL_PROVIDER, positiveInteger, runChecks } from "../src/local.mjs";
 import { parseBoolean, policyForRun, validateChecksDir } from "../src/options.mjs";
 import { DEDUP_SCHEMA, RESOLUTION_SCHEMA, RESULT_SCHEMA } from "../src/parse.mjs";
-import { fetchAuthEnv, preparePullRequest, resolveMergeBase, verifyCheckout } from "../src/prepare.mjs";
+import {
+  fetchAuthEnv,
+  preparePullRequest,
+  resolveMergeBase,
+  verifyCheckout,
+} from "../src/prepare.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "../src/provider.mjs";
 import { renderMarkdown, renderText } from "../src/render.mjs";
 
@@ -107,10 +120,14 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
     },
     async run(values) {
       if (!["text", "markdown", "json"].includes(values.format)) {
-        throw new UsageError(`--format must be text, markdown, or json, got ${JSON.stringify(values.format)}`);
+        throw new UsageError(
+          `--format must be text, markdown, or json, got ${JSON.stringify(values.format)}`,
+        );
       }
       if (!/^\d+(\.\d+)?$/.test(values["max-budget"]) || Number(values["max-budget"]) <= 0) {
-        throw new UsageError(`--max-budget must be a positive USD amount, got ${JSON.stringify(values["max-budget"])}`);
+        throw new UsageError(
+          `--max-budget must be a positive USD amount, got ${JSON.stringify(values["max-budget"])}`,
+        );
       }
       const repoDir = repoRoot(values["repo-dir"]);
       const checksDir = validateChecksDir(values["checks-dir"]);
@@ -120,23 +137,40 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
         env: process.env,
         providerEnv: parseProviderEnv(process.env.WEAVE_CHECKS_PROVIDER_ENV),
       });
-      const matrix = selectChecks(discoverFromOptions({ ...values, "repo-dir": repoDir }), values.only);
+      const matrix = selectChecks(
+        discoverFromOptions({ ...values, "repo-dir": repoDir }),
+        values.only,
+      );
 
       if (spawnSync("claude", ["--version"], { stdio: "ignore" }).status !== 0) {
-        throw new UsageError("`claude` not found on PATH. Install Claude Code first: https://docs.claude.com/en/docs/claude-code");
+        throw new UsageError(
+          "`claude` not found on PATH. Install Claude Code first: https://docs.claude.com/en/docs/claude-code",
+        );
       }
 
-      const artifactsDir = values["artifacts-dir"]
-        ? path.resolve(values["artifacts-dir"])
+      const artifactsDir =
+        values["artifacts-dir"] ?
+          path.resolve(values["artifacts-dir"])
         : mkdtempSync(path.join(os.tmpdir(), "weave-checks-run-"));
       mkdirSync(artifactsDir, { recursive: true });
-      const outputPath = values.output ? path.resolve(values.output) : path.join(artifactsDir, "results.json");
-      writeFileSync(path.join(artifactsDir, "matrix.json"), `${JSON.stringify({ check: matrix })}\n`);
+      const outputPath =
+        values.output ? path.resolve(values.output) : path.join(artifactsDir, "results.json");
+      writeFileSync(
+        path.join(artifactsDir, "matrix.json"),
+        `${JSON.stringify({ check: matrix })}\n`,
+      );
 
       const { pathspecs } = readIgnorePathspecs(path.join(repoDir, checksDir));
       const base = await localDiffBase(repoDir, values);
-      const prepared = values.head
-        ? writeRangeDiff({ repoDir, base, head: values.head, outDir: artifactsDir, ignorePathspecs: pathspecs })
+      const prepared =
+        values.head ?
+          writeRangeDiff({
+            repoDir,
+            base,
+            head: values.head,
+            outDir: artifactsDir,
+            ignorePathspecs: pathspecs,
+          })
         : writeWorkingTreeDiff({
             repoDir,
             base,
@@ -146,7 +180,9 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
             ignorePathspecs: pathspecs,
           });
       if (prepared.diff.trim() === "") {
-        throw new UsageError(`no changes between ${base.slice(0, 12)} and ${values.head || "the working tree"} — nothing to check.`);
+        throw new UsageError(
+          `no changes between ${base.slice(0, 12)} and ${values.head || "the working tree"} — nothing to check.`,
+        );
       }
 
       const parallel = positiveInteger(values.parallel, 4);
@@ -173,7 +209,9 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
       } else if (values.format === "markdown") {
         process.stdout.write(renderMarkdown(summary));
       } else {
-        process.stdout.write(renderText(summary, { color: process.stdout.isTTY === true && !process.env.NO_COLOR }));
+        process.stdout.write(
+          renderText(summary, { color: process.stdout.isTTY === true && !process.env.NO_COLOR }),
+        );
         process.stdout.write(`Artifacts: ${artifactsDir}\n`);
       }
       // Only a finding fails the run. A neutral outcome is an operational
@@ -212,7 +250,8 @@ ${POLICY_HELP}
     run(values) {
       const schemas = { result: RESULT_SCHEMA, resolution: RESOLUTION_SCHEMA, dedup: DEDUP_SCHEMA };
       const schema = schemas[values.kind];
-      if (schema === undefined) throw new Error(`unknown schema kind ${JSON.stringify(values.kind)}`);
+      if (schema === undefined)
+        throw new Error(`unknown schema kind ${JSON.stringify(values.kind)}`);
       process.stdout.write(`${JSON.stringify(schema)}\n`);
     },
   },
@@ -230,7 +269,9 @@ ${POLICY_HELP}
         throw new Error(`Weave issued a token for ${repository}, not ${env.GITHUB_REPOSITORY}`);
       }
       writeOutputs(env.GITHUB_OUTPUT, { token });
-      console.error(`Authenticated as the Weave Checks GitHub App for ${repository ?? env.GITHUB_REPOSITORY}.`);
+      console.error(
+        `Authenticated as the Weave Checks GitHub App for ${repository ?? env.GITHUB_REPOSITORY}.`,
+      );
     },
   },
 
@@ -244,9 +285,9 @@ ${POLICY_HELP}
         apiUrl: env.GITHUB_API_URL || "https://api.github.com",
       });
       console.error(
-        outcome.revoked
-          ? "Revoked the Weave Checks App token."
-          : `Could not revoke the Weave Checks App token (${outcome.error ?? `HTTP ${outcome.status}`}); it expires within an hour.`,
+        outcome.revoked ?
+          "Revoked the Weave Checks App token."
+        : `Could not revoke the Weave Checks App token (${outcome.error ?? `HTTP ${outcome.status}`}); it expires within an hour.`,
       );
     },
   },
@@ -266,7 +307,9 @@ ${POLICY_HELP}
           detailsUrl: `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`,
         });
       } catch (error) {
-        throw new Error(`could not create the aggregate check run: ${error.message}${permissionHint(error)}`);
+        throw new Error(
+          `could not create the aggregate check run: ${error.message}${permissionHint(error)}`,
+        );
       }
       writeOutputs(env.GITHUB_OUTPUT, { id });
     },
@@ -285,9 +328,9 @@ ${POLICY_HELP}
       console.error(verifyCheckout({ repoDir, headSha }));
       const { pathspecs, ignorePath } = readIgnorePathspecs(path.join(repoDir, checksDir));
       console.error(
-        pathspecs.length === 0
-          ? `no ignored paths in ${checksDir}/.ignore`
-          : `ignoring ${pathspecs.length} path(s) from ${path.relative(repoDir, ignorePath)}: ${pathspecs.join(" ")}`,
+        pathspecs.length === 0 ?
+          `no ignored paths in ${checksDir}/.ignore`
+        : `ignoring ${pathspecs.length} path(s) from ${path.relative(repoDir, ignorePath)}: ${pathspecs.join(" ")}`,
       );
       const prepared = await preparePullRequest({
         rest: githubClient(env),
@@ -300,7 +343,10 @@ ${POLICY_HELP}
         aggregateName: brandingFromEnv(env).aggregateName,
         ignorePathspecs: pathspecs,
         diffBase: env.WEAVE_CHECKS_DIFF_BASE || undefined,
-        fetchEnv: fetchAuthEnv(env.GITHUB_SERVER_URL || "https://github.com", env.WEAVE_CHECKS_APP_TOKEN),
+        fetchEnv: fetchAuthEnv(
+          env.GITHUB_SERVER_URL || "https://github.com",
+          env.WEAVE_CHECKS_APP_TOKEN,
+        ),
       });
 
       const policy = policyForRun({
@@ -313,7 +359,9 @@ ${POLICY_HELP}
 
       if (env.GITHUB_STEP_SUMMARY) {
         // Deliberately headless: the worker's own table header follows it.
-        writeFileSync(env.GITHUB_STEP_SUMMARY, `_Reviewing from ${prepared.note}._\n\n`, { flag: "a" });
+        writeFileSync(env.GITHUB_STEP_SUMMARY, `_Reviewing from ${prepared.note}._\n\n`, {
+          flag: "a",
+        });
       }
       writeOutputs(env.GITHUB_OUTPUT, {
         count: matrix.length,
@@ -343,7 +391,11 @@ ${POLICY_HELP}
         completePath: path.join(tempDir, "complete"),
         aggregateName,
       });
-      console.error(closed ? "Closed the incomplete aggregate check run as neutral." : "Aggregate already closed.");
+      console.error(
+        closed ?
+          "Closed the incomplete aggregate check run as neutral."
+        : "Aggregate already closed.",
+      );
     },
   },
 
@@ -369,15 +421,20 @@ ${POLICY_HELP}
 class UsageError extends Error {}
 
 function selectChecks(matrix, only) {
-  const slugs = only.split(",").map((slug) => slug.trim()).filter((slug) => slug !== "");
+  const slugs = only
+    .split(",")
+    .map(slug => slug.trim())
+    .filter(slug => slug !== "");
   if (slugs.length === 0) return matrix;
-  const known = new Set(matrix.map((check) => check.slug));
-  const unknown = slugs.filter((slug) => !known.has(slug)).sort();
+  const known = new Set(matrix.map(check => check.slug));
+  const unknown = slugs.filter(slug => !known.has(slug)).sort();
   if (unknown.length > 0) {
-    throw new UsageError(`unknown check(s): ${unknown.join(", ")}\navailable: ${[...known].sort().join(", ")}`);
+    throw new UsageError(
+      `unknown check(s): ${unknown.join(", ")}\navailable: ${[...known].sort().join(", ")}`,
+    );
   }
   const selected = new Set(slugs);
-  return matrix.filter((check) => selected.has(check.slug));
+  return matrix.filter(check => selected.has(check.slug));
 }
 
 async function localDiffBase(repoDir, values) {
@@ -391,9 +448,12 @@ async function localDiffBase(repoDir, values) {
   }
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) throw new UsageError("--github-merge-base needs GITHUB_TOKEN or GH_TOKEN");
-  const sha = (ref) => gitLine(["rev-parse", "--verify", `${ref}^{commit}`], { cwd: repoDir });
+  const sha = ref => gitLine(["rev-parse", "--verify", `${ref}^{commit}`], { cwd: repoDir });
   const mergeBase = await resolveMergeBase({
-    rest: createGitHubClient({ apiUrl: process.env.GITHUB_API_URL || "https://api.github.com", token }),
+    rest: createGitHubClient({
+      apiUrl: process.env.GITHUB_API_URL || "https://api.github.com",
+      token,
+    }),
     repository: values["github-merge-base"],
     baseSha: sha(values.base),
     headSha: sha(values.head || "HEAD"),
@@ -440,7 +500,12 @@ async function main(argv) {
   }
   let values;
   try {
-    ({ values } = parseArgs({ args: rest, options: command.options, strict: true, allowPositionals: false }));
+    ({ values } = parseArgs({
+      args: rest,
+      options: command.options,
+      strict: true,
+      allowPositionals: false,
+    }));
   } catch (error) {
     throw new UsageError(`${error.message}\n\n${command.help}`);
   }

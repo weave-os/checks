@@ -5,13 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { afterEach, describe, it } from "node:test";
 
-import {
-  CLI_RESULT_SUBTYPE,
-  CLUSTER_LOW,
-  MODEL_HAIKU,
-  OUTCOME,
-  VERDICT,
-} from "./parse.mjs";
+import { CLI_RESULT_SUBTYPE, CLUSTER_LOW, MODEL_HAIKU, OUTCOME, VERDICT } from "./parse.mjs";
 import {
   evaluateCheck,
   formatDuration,
@@ -58,14 +52,7 @@ const COUNT_FILE = "WEAVE_CHECKS_TEST_COUNT_FILE";
 const EXIT_CODE = "WEAVE_CHECKS_TEST_EXIT_CODE";
 
 const originalPath = process.env.PATH;
-const testEnvNames = [
-  ARGV_OUT,
-  ENV_OUT,
-  STDIN_OUT,
-  STREAM_PREFIX,
-  COUNT_FILE,
-  EXIT_CODE,
-];
+const testEnvNames = [ARGV_OUT, ENV_OUT, STDIN_OUT, STREAM_PREFIX, COUNT_FILE, EXIT_CODE];
 
 afterEach(() => {
   process.env.PATH = originalPath;
@@ -84,10 +71,7 @@ function workspace() {
   mkdirSync(bin);
   mkdirSync(tempDir);
   mkdirSync(path.join(repoDir, ".weave-checks"), { recursive: true });
-  writeFileSync(
-    path.join(repoDir, CHECK.path),
-    "Flag any line that says one.\n",
-  );
+  writeFileSync(path.join(repoDir, CHECK.path), "Flag any line that says one.\n");
 
   writeFileSync(
     path.join(bin, "claude"),
@@ -124,10 +108,7 @@ function workspace() {
     // Queues one stream per invocation, in order.
     stream(...streams) {
       streams.forEach((lines, index) => {
-        writeFileSync(
-          `${process.env[STREAM_PREFIX]}.${index + 1}.jsonl`,
-          `${lines.join("\n")}\n`,
-        );
+        writeFileSync(`${process.env[STREAM_PREFIX]}.${index + 1}.jsonl`, `${lines.join("\n")}\n`);
       });
     },
     callCount() {
@@ -200,7 +181,6 @@ function invoke(space, overrides = {}) {
     model: CHECK.model,
     schemaText: SCHEMA_TEXT,
     promptText: "review this",
-    maxBudget: "2",
     repoDir: space.repoDir,
     tempDir: space.tempDir,
     ...overrides,
@@ -230,7 +210,7 @@ describe("runClaude", () => {
     assert.ok(argv.includes("--allowedTools"));
     assert.ok(argv.includes("Bash(git diff *)"));
     assert.ok(argv.includes("--no-session-persistence"));
-    assert.deepEqual(argv.slice(-2), ["--max-budget-usd", "2"]);
+    assert.ok(!argv.includes("--max-budget-usd"));
     assert.equal(invocation.code, 0);
     assert.equal(invocation.sessionId, "sess-1");
     assert.equal(space.childEnv().get("WEAVE_PROMPT_INITIATOR"), "automation");
@@ -270,8 +250,6 @@ describe("runClaude", () => {
       "--setting-sources",
       "",
       "--no-session-persistence",
-      "--max-budget-usd",
-      "2",
     ]);
   });
 
@@ -301,7 +279,7 @@ describe("runClaude", () => {
         cluster: CLUSTER_LOW,
         provider: fakeProvider({
           dropEnv: ["WEAVE_CHECKS_TEST_SECRET"],
-          envFor: (args) => {
+          envFor: args => {
             seen.push(args);
             return { ANTHROPIC_BASE_URL: "https://gateway.example.com" };
           },
@@ -370,7 +348,7 @@ describe("runClaude", () => {
       cluster: CLUSTER_LOW,
       provider: fakeProvider({
         costLabel: "test cost",
-        resolveCost: async (args) => {
+        resolveCost: async args => {
           calls.push(args);
           return { cost: args.resultEvent.total_cost_usd, error: null };
         },
@@ -393,7 +371,7 @@ describe("runClaude", () => {
 
     const invocation = await invoke(space, {
       provider: fakeProvider({ resolveCost: () => ({ cost: null, error: "no cost" }) }),
-      onCostError: (entry) => errors.push(entry),
+      onCostError: entry => errors.push(entry),
     });
 
     assert.equal(invocation.cost, null);
@@ -406,7 +384,7 @@ describe("runClaude", () => {
 
     await invoke(space);
 
-    const artifact = (suffix) =>
+    const artifact = suffix =>
       readFileSync(path.join(space.tempDir, `${CHECK.slug}.claude.${suffix}`), "utf8");
     assert.equal(artifact("prompt.txt"), "review this");
     assert.match(artifact("transcript.jsonl"), /"type":"result"/);
@@ -628,7 +606,10 @@ describe("promptFor", () => {
       stat: STAT,
       productName: "Acme Review",
     });
-    assert.match(prompt, /^You are running the advisory Acme Review "Demo Check" on a pull request\./);
+    assert.match(
+      prompt,
+      /^You are running the advisory Acme Review "Demo Check" on a pull request\./,
+    );
   });
 
   it("includes the history section and the don't-repeat rule when given one", () => {
@@ -706,7 +687,7 @@ describe("evaluateCheck", () => {
     const attempts = [];
 
     const result = await evaluate(space, {
-      onAttempt: (label) => attempts.push(label),
+      onAttempt: label => attempts.push(label),
     });
 
     assert.deepEqual(attempts, ["Main review", "Main review (retry)"]);
@@ -760,10 +741,10 @@ describe("runPool", () => {
   it("preserves input order and never exceeds the concurrency bound", async () => {
     let inFlight = 0;
     let peak = 0;
-    const results = await runPool([1, 2, 3, 4, 5, 6, 7], 3, async (item) => {
+    const results = await runPool([1, 2, 3, 4, 5, 6, 7], 3, async item => {
       inFlight += 1;
       peak = Math.max(peak, inFlight);
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 1));
       inFlight -= 1;
       return item * 2;
     });

@@ -64,17 +64,15 @@ const CONTENT_BLOCK_TYPE = {
 export function formatTranscriptSection(phase, sessions) {
   if (sessions.length === 0) return "";
   const summaryLabel =
-    sessions.length === 1
-      ? `${phase} transcript`
-      : `${phase} transcripts (${sessions.length} attempts)`;
+    sessions.length === 1 ?
+      `${phase} transcript`
+    : `${phase} transcripts (${sessions.length} attempts)`;
   const lines = [`<details><summary>${summaryLabel}</summary>`, ""];
   // Each session gets an equal share of the section cap so a check that ran
   // all four phases doesn't put the last phase's transcript into a 0-byte
   // allowance. The framing cost (details/summary tags + per-block headers)
   // is bounded because each block has roughly the same shape.
-  const perSessionBudget = Math.floor(
-    TRANSCRIPT_SECTION_MAX_BYTES / sessions.length,
-  );
+  const perSessionBudget = Math.floor(TRANSCRIPT_SECTION_MAX_BYTES / sessions.length);
   let renderedPhase = false;
   for (const session of sessions) {
     const rendered = renderSessionBlock(session, perSessionBudget);
@@ -155,8 +153,9 @@ function renderSessionBlock(session, byteBudget) {
   // Weave Router's authoritative number, "client-reported cost" is the CLI's
   // local estimate. An unlabelled cost is just "cost" -- never implied to be
   // provider-billed.
-  const costFragment = Number.isFinite(session.cost)
-    ? ` · ${session.costLabel || "cost"} $${session.cost.toFixed(2)}`
+  const costFragment =
+    Number.isFinite(session.cost) ?
+      ` · ${session.costLabel || "cost"} $${session.cost.toFixed(2)}`
     : "";
   const header = `**${session.label}** · session \`${session.sessionId ?? "unknown"}\`${costFragment}`;
   const summary = summarizeTranscript(text);
@@ -167,16 +166,15 @@ function renderSessionBlock(session, byteBudget) {
     // transcript had content. Saying "No transcript events" in that case
     // would tell the reviewer the run produced nothing, when the truth is
     // "produced something, cut entirely by the byte budget."
-    return truncated
-      ? [header, "", formatTruncationNote(omitted)]
+    return truncated ?
+        [header, "", formatTruncationNote(omitted)]
       : [header, "", "_No transcript events were recorded._"];
   }
   // The parser produces one display line per event. A text fence preserves
   // that alignment without presenting the stream as raw JSONL, and escaping
   // fence delimiters keeps a model-produced code sample inside the block.
   const trailingResult = truncated ? terminalResultLine(summary) : null;
-  const resultWasOmitted =
-    trailingResult !== null && !preview.endsWith(trailingResult);
+  const resultWasOmitted = trailingResult !== null && !preview.endsWith(trailingResult);
   const tail = [];
   // Reinstating the trailing result line below can bring the adjusted omit
   // count down to 0 -- e.g. truncation dropped only the terminal `Result`
@@ -224,10 +222,7 @@ function formatTruncationNote(omitted) {
 }
 
 function summarizeEvent(event, toolNames) {
-  if (
-    event.type === STREAM_EVENT_TYPE.SYSTEM &&
-    event.subtype === SYSTEM_SUBTYPE.INIT
-  ) {
+  if (event.type === STREAM_EVENT_TYPE.SYSTEM && event.subtype === SYSTEM_SUBTYPE.INIT) {
     const details = [];
     if (typeof event.model === "string") details.push(`model ${event.model}`);
     if (typeof event.session_id === "string") details.push(`session ${event.session_id}`);
@@ -250,9 +245,8 @@ function summarizeAssistant(event, toolNames) {
       lines.push(`Assistant: ${shorten(block.text)}`);
     } else if (block.type === CONTENT_BLOCK_TYPE.THINKING) {
       const thinkingChars = typeof block.thinking === "string" ? block.thinking.length : 0;
-      const signatureBytes = typeof block.signature === "string"
-        ? Buffer.byteLength(block.signature, "utf8")
-        : 0;
+      const signatureBytes =
+        typeof block.signature === "string" ? Buffer.byteLength(block.signature, "utf8") : 0;
       const details = [`${thinkingChars.toLocaleString()} chars`];
       if (signatureBytes > 0) details.push(`${formatBytes(signatureBytes)} signature`);
       lines.push(`Assistant thinking · ${details.join(" · ")}`);
@@ -296,9 +290,14 @@ function summarizeResult(event) {
   if (Number.isFinite(event.num_turns)) details.push(`${event.num_turns} turns`);
   if (isRecord(event.usage)) {
     const usage = [];
-    if (Number.isFinite(event.usage.input_tokens)) usage.push(`${event.usage.input_tokens.toLocaleString()} input`);
-    if (Number.isFinite(event.usage.output_tokens)) usage.push(`${event.usage.output_tokens.toLocaleString()} output`);
-    if (Number.isFinite(event.usage.cache_read_input_tokens) && event.usage.cache_read_input_tokens > 0) {
+    if (Number.isFinite(event.usage.input_tokens))
+      usage.push(`${event.usage.input_tokens.toLocaleString()} input`);
+    if (Number.isFinite(event.usage.output_tokens))
+      usage.push(`${event.usage.output_tokens.toLocaleString()} output`);
+    if (
+      Number.isFinite(event.usage.cache_read_input_tokens) &&
+      event.usage.cache_read_input_tokens > 0
+    ) {
       usage.push(`${event.usage.cache_read_input_tokens.toLocaleString()} cache read`);
     }
     if (usage.length > 0) details.push(usage.join(" · "));
@@ -310,7 +309,7 @@ function toolResultText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return shortenJson(content);
   return content
-    .map((block) => {
+    .map(block => {
       if (typeof block === "string") return block;
       if (isRecord(block) && typeof block.text === "string") return block.text;
       return shortenJson(block);
@@ -383,11 +382,7 @@ export function splitStreamJson(stdout) {
     if (!isRecord(event)) {
       continue;
     }
-    if (
-      typeof event.session_id === "string" &&
-      event.session_id !== "" &&
-      sessionId === null
-    ) {
+    if (typeof event.session_id === "string" && event.session_id !== "" && sessionId === null) {
       sessionId = event.session_id;
     }
     if (event.type === "result") {

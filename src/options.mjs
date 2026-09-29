@@ -8,8 +8,8 @@ import { policyFrom } from "./parse.mjs";
 export function splitList(value) {
   return (value ?? "")
     .split(/[\s,]+/)
-    .map((item) => item.trim())
-    .filter((item) => item !== "");
+    .map(item => item.trim())
+    .filter(item => item !== "");
 }
 
 export function parseBoolean(name, value, fallback) {

@@ -55,11 +55,30 @@ const FORBIDDEN = [
 
 describe("public check collections", () => {
   it("keeps the starter set separate from the situational library", () => {
-    assert.deepEqual(readdirSync(STARTER_DIR).filter((name) => name.endsWith(".md")).sort(), STARTER_EXPECTED);
-    assert.deepEqual(readdirSync(LIBRARY_DIR).filter((name) => name.endsWith(".md")).sort(), LIBRARY_EXPECTED);
-    assert.equal(discoverChecks("starter-checks", { repoDir: ROOT, policy: WEAVE_POLICY }).length, 11);
-    assert.equal(discoverChecks("checks-library", { repoDir: ROOT, policy: WEAVE_POLICY }).length, 3);
-    assert.match(readFileSync(path.join(LIBRARY_DIR, "README.md"), "utf8"), /may make sense in certain circumstances/i);
+    assert.deepEqual(
+      readdirSync(STARTER_DIR)
+        .filter(name => name.endsWith(".md"))
+        .sort(),
+      STARTER_EXPECTED,
+    );
+    assert.deepEqual(
+      readdirSync(LIBRARY_DIR)
+        .filter(name => name.endsWith(".md"))
+        .sort(),
+      LIBRARY_EXPECTED,
+    );
+    assert.equal(
+      discoverChecks("starter-checks", { repoDir: ROOT, policy: WEAVE_POLICY }).length,
+      11,
+    );
+    assert.equal(
+      discoverChecks("checks-library", { repoDir: ROOT, policy: WEAVE_POLICY }).length,
+      3,
+    );
+    assert.match(
+      readFileSync(path.join(LIBRARY_DIR, "README.md"), "utf8"),
+      /may make sense in certain circumstances/i,
+    );
   });
 
   it("maps all four intelligence tiers to rolling aliases and same-value Router clusters", () => {
@@ -67,7 +86,11 @@ describe("public check collections", () => {
     for (const dir of ["starter-checks", "checks-library"]) {
       const matrix = discoverChecks(dir, { repoDir: ROOT, policy: WEAVE_POLICY });
       for (const check of matrix) {
-        assert.equal(check.model, expectedAlias[check.intelligence], `${check.path}: alias for ${check.intelligence}`);
+        assert.equal(
+          check.model,
+          expectedAlias[check.intelligence],
+          `${check.path}: alias for ${check.intelligence}`,
+        );
         assert.equal(check.cluster, check.intelligence, `${check.path}: Router force-cluster`);
       }
     }
@@ -75,7 +98,10 @@ describe("public check collections", () => {
   });
 
   it("contains no forbidden internal policy, paths, or incident context", () => {
-    for (const [dir, names] of [[STARTER_DIR, STARTER_EXPECTED], [LIBRARY_DIR, LIBRARY_EXPECTED]]) {
+    for (const [dir, names] of [
+      [STARTER_DIR, STARTER_EXPECTED],
+      [LIBRARY_DIR, LIBRARY_EXPECTED],
+    ]) {
       for (const name of names) {
         const text = readFileSync(path.join(dir, name), "utf8");
         for (const pattern of FORBIDDEN) {

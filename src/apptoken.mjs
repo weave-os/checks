@@ -19,7 +19,8 @@ import { requestWithRetry, truncateBody } from "./githubapi.mjs";
 // OIDC use so a token minted for Weave Checks can never be replayed elsewhere.
 export const OIDC_AUDIENCE = "weave-checks";
 
-export const DEFAULT_TOKEN_EXCHANGE_URL = "https://staging-01.weaveos.com/api/v1/checks/github-token";
+export const DEFAULT_TOKEN_EXCHANGE_URL =
+  "https://staging-01.weaveos.com/api/v1/checks/github-token";
 
 // Where to install the App, named in every error that means "not installed".
 export const APP_INSTALL_URL = "https://github.com/apps/weave-checks/installations/new";
@@ -64,7 +65,12 @@ export async function requestOidcToken({
   const response = await requestWithRetry(
     url.toString(),
     { headers: { Authorization: `Bearer ${requestToken}`, Accept: "application/json" } },
-    { label: "GET OIDC token", fetchFn, ...(sleepFn ? { sleepFn } : {}), ...(logFn ? { logFn } : {}) },
+    {
+      label: "GET OIDC token",
+      fetchFn,
+      ...(sleepFn ? { sleepFn } : {}),
+      ...(logFn ? { logFn } : {}),
+    },
   );
   if (!response.ok) {
     throw new TokenExchangeError(
@@ -117,7 +123,12 @@ export async function exchangeForAppToken({
       method: "POST",
       headers: { Authorization: `Bearer ${oidcToken}`, Accept: "application/json" },
     },
-    { label: "POST Weave Checks token exchange", fetchFn, ...(sleepFn ? { sleepFn } : {}), ...(logFn ? { logFn } : {}) },
+    {
+      label: "POST Weave Checks token exchange",
+      fetchFn,
+      ...(sleepFn ? { sleepFn } : {}),
+      ...(logFn ? { logFn } : {}),
+    },
   );
   let body = null;
   try {
@@ -134,14 +145,24 @@ export async function exchangeForAppToken({
     );
   }
   if (typeof body?.token !== "string" || body.token === "") {
-    throw new TokenExchangeError("Weave's token exchange response carried no token", { status: response.status });
+    throw new TokenExchangeError("Weave's token exchange response carried no token", {
+      status: response.status,
+    });
   }
-  return { token: body.token, expiresAt: body.expires_at ?? null, repository: body.repository ?? null };
+  return {
+    token: body.token,
+    expiresAt: body.expires_at ?? null,
+    repository: body.repository ?? null,
+  };
 }
 
 // Revokes the installation token so it cannot outlive the job. Best-effort:
 // it expires within an hour regardless, so a failure is reported, not raised.
-export async function revokeAppToken({ token, apiUrl = "https://api.github.com", fetchFn = fetch }) {
+export async function revokeAppToken({
+  token,
+  apiUrl = "https://api.github.com",
+  fetchFn = fetch,
+}) {
   try {
     const response = await fetchFn(`${apiUrl}/installation/token`, {
       method: "DELETE",

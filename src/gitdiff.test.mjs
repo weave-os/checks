@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -82,7 +90,12 @@ describe("writeWorkingTreeDiff", () => {
     const indexBefore = readFileSync(path.join(r.dir, ".git", "index"));
     const scratch = new Set();
 
-    const { diff, stat } = writeWorkingTreeDiff({ repoDir: r.dir, base, outDir: r.out, git: tracingGit(scratch) });
+    const { diff, stat } = writeWorkingTreeDiff({
+      repoDir: r.dir,
+      base,
+      outDir: r.out,
+      git: tracingGit(scratch),
+    });
 
     for (const text of [diff, stat]) {
       assert.match(text, /staged\.txt/);
@@ -100,7 +113,11 @@ describe("writeWorkingTreeDiff", () => {
     assert.equal(scratch.size, 1);
     for (const index of scratch) {
       assert.ok(!index.startsWith(`${r.dir}${path.sep}`), "scratch index must be outside the repo");
-      assert.equal(existsSync(path.dirname(index)), false, "scratch index directory should be removed");
+      assert.equal(
+        existsSync(path.dirname(index)),
+        false,
+        "scratch index directory should be removed",
+      );
     }
   });
 
@@ -112,7 +129,13 @@ describe("writeWorkingTreeDiff", () => {
     const scratch = new Set();
 
     assert.throws(
-      () => writeWorkingTreeDiff({ repoDir: r.dir, base: "no-such-ref", outDir: r.out, git: tracingGit(scratch) }),
+      () =>
+        writeWorkingTreeDiff({
+          repoDir: r.dir,
+          base: "no-such-ref",
+          outDir: r.out,
+          git: tracingGit(scratch),
+        }),
       /git diff/,
     );
     assert.equal(scratch.size, 1);
@@ -161,7 +184,13 @@ describe("writeWorkingTreeDiff", () => {
     });
 
     assert.match(diff, /\+changed/);
-    for (const leaked of ["review-out", "matrix.json", "settings-low.json", "sk-secret", "results.json"]) {
+    for (const leaked of [
+      "review-out",
+      "matrix.json",
+      "settings-low.json",
+      "sk-secret",
+      "results.json",
+    ]) {
       assert.ok(!diff.includes(leaked), leaked);
     }
   });
@@ -174,7 +203,10 @@ describe("writeWorkingTreeDiff", () => {
     r.git("add", ".");
     const base = r.commit();
     r.write("tracked.txt", "base\nchanged\n");
-    r.write(".weave-checks-local/settings/settings-low.json", '{"env":{"ANTHROPIC_API_KEY":"sk-secret"}}\n');
+    r.write(
+      ".weave-checks-local/settings/settings-low.json",
+      '{"env":{"ANTHROPIC_API_KEY":"sk-secret"}}\n',
+    );
 
     const { diff } = writeWorkingTreeDiff({
       repoDir: r.dir,
@@ -277,7 +309,10 @@ describe("resolveDiffBase", () => {
 
   it("never rewrites an explicit base", () => {
     const { r } = branched();
-    assert.throws(() => resolveDiffBase({ repoDir: r.dir, base: "origin/develop" }), /git merge-base origin\/develop HEAD/);
+    assert.throws(
+      () => resolveDiffBase({ repoDir: r.dir, base: "origin/develop" }),
+      /git merge-base origin\/develop HEAD/,
+    );
   });
 });
 

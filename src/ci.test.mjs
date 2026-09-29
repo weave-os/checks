@@ -46,14 +46,22 @@ describe("createAggregate", () => {
         head_sha: "abc",
         status: "in_progress",
         details_url: "https://github.com/o/r/actions/runs/1",
-        output: { title: "Acme Checks: preparing", summary: "Checking out the PR and discovering checks..." },
+        output: {
+          title: "Acme Checks: preparing",
+          summary: "Checking out the PR and discovering checks...",
+        },
       },
     });
   });
 
   it("fails when GitHub returns no id", async () => {
     await assert.rejects(
-      createAggregate({ rest: recordingRest({}), repository: "o/r", headSha: "abc", aggregateName: "A" }),
+      createAggregate({
+        rest: recordingRest({}),
+        repository: "o/r",
+        headSha: "abc",
+        aggregateName: "A",
+      }),
       /returned no id/,
     );
   });
@@ -66,7 +74,16 @@ describe("closeAggregate", () => {
     writeFileSync(completePath, "completed\n");
     const rest = recordingRest();
 
-    assert.equal(await closeAggregate({ rest, repository: "o/r", checkRunId: "5", completePath, aggregateName: "A" }), false);
+    assert.equal(
+      await closeAggregate({
+        rest,
+        repository: "o/r",
+        checkRunId: "5",
+        completePath,
+        aggregateName: "A",
+      }),
+      false,
+    );
     assert.equal(rest.calls.length, 0);
   });
 
@@ -91,7 +108,16 @@ describe("closeAggregate", () => {
 
   it("does nothing when no aggregate was created", async () => {
     const rest = recordingRest();
-    assert.equal(await closeAggregate({ rest, repository: "o/r", checkRunId: "", completePath: "/nope", aggregateName: "A" }), false);
+    assert.equal(
+      await closeAggregate({
+        rest,
+        repository: "o/r",
+        checkRunId: "",
+        completePath: "/nope",
+        aggregateName: "A",
+      }),
+      false,
+    );
     assert.equal(rest.calls.length, 0);
   });
 });
@@ -101,8 +127,15 @@ describe("writeStepSummary", () => {
     const root = scratch();
     const stepSummaryPath = path.join(root, "step.md");
     writeFileSync(stepSummaryPath, "_Reviewing from x._\n\n");
-    writeStepSummary({ summaryPath: path.join(root, "missing.md"), stepSummaryPath, aggregateName: "Acme Checks" });
-    assert.match(readFileSync(stepSummaryPath, "utf8"), /^_Reviewing from x\._\n\n## Acme Checks\n\nThe coordinator did not produce a summary/);
+    writeStepSummary({
+      summaryPath: path.join(root, "missing.md"),
+      stepSummaryPath,
+      aggregateName: "Acme Checks",
+    });
+    assert.match(
+      readFileSync(stepSummaryPath, "utf8"),
+      /^_Reviewing from x\._\n\n## Acme Checks\n\nThe coordinator did not produce a summary/,
+    );
 
     const summaryPath = path.join(root, "summary.md");
     writeFileSync(summaryPath, "**Acme Checks** — table\n");
@@ -123,7 +156,12 @@ describe("report", () => {
     const outputPath = path.join(root, "output");
     const resultsPath = results(root, { pass: 3, flagged: 1, neutral: 0, cost: 0.42 });
 
-    const outcome = report({ resultsPath, summaryPath: "/s.md", outputPath, failOnFindings: false });
+    const outcome = report({
+      resultsPath,
+      summaryPath: "/s.md",
+      outputPath,
+      failOnFindings: false,
+    });
 
     assert.equal(outcome.ok, true);
     assert.equal(
@@ -135,15 +173,33 @@ describe("report", () => {
   it("publishes an unknown cost as empty, never zero", () => {
     const root = scratch();
     const outputPath = path.join(root, "output");
-    report({ resultsPath: results(root, { pass: 1, flagged: 0, neutral: 0, cost: null }), summaryPath: "/s", outputPath, failOnFindings: false });
+    report({
+      resultsPath: results(root, { pass: 1, flagged: 0, neutral: 0, cost: null }),
+      summaryPath: "/s",
+      outputPath,
+      failOnFindings: false,
+    });
     assert.match(readFileSync(outputPath, "utf8"), /^total-cost=$/m);
   });
 
   it("fails only on findings, and only when asked", () => {
     const root = scratch();
     const flagged = results(root, { pass: 1, flagged: 2, neutral: 0, cost: null });
-    assert.equal(report({ resultsPath: flagged, summaryPath: "/s", outputPath: path.join(root, "o1"), failOnFindings: false }).ok, true);
-    const outcome = report({ resultsPath: flagged, summaryPath: "/s", outputPath: path.join(root, "o2"), failOnFindings: true });
+    assert.equal(
+      report({
+        resultsPath: flagged,
+        summaryPath: "/s",
+        outputPath: path.join(root, "o1"),
+        failOnFindings: false,
+      }).ok,
+      true,
+    );
+    const outcome = report({
+      resultsPath: flagged,
+      summaryPath: "/s",
+      outputPath: path.join(root, "o2"),
+      failOnFindings: true,
+    });
     assert.equal(outcome.ok, false);
     assert.match(outcome.message, /2 check\(s\) flagged findings/);
   });
@@ -152,13 +208,26 @@ describe("report", () => {
   it("does not fail on neutral checks", () => {
     const root = scratch();
     const neutral = results(root, { pass: 0, flagged: 0, neutral: 3, cost: null });
-    assert.equal(report({ resultsPath: neutral, summaryPath: "/s", outputPath: path.join(root, "o"), failOnFindings: true }).ok, true);
+    assert.equal(
+      report({
+        resultsPath: neutral,
+        summaryPath: "/s",
+        outputPath: path.join(root, "o"),
+        failOnFindings: true,
+      }).ok,
+      true,
+    );
   });
 
   it("reports nothing without results, leaving the worker's own failure to speak", () => {
     const root = scratch();
     const outputPath = path.join(root, "o");
-    const outcome = report({ resultsPath: path.join(root, "missing.json"), summaryPath: "/s", outputPath, failOnFindings: true });
+    const outcome = report({
+      resultsPath: path.join(root, "missing.json"),
+      summaryPath: "/s",
+      outputPath,
+      failOnFindings: true,
+    });
     assert.equal(outcome.ok, true);
     assert.doesNotMatch(readFileSync(outputPath, "utf8"), /flagged=/);
   });
@@ -166,7 +235,10 @@ describe("report", () => {
 
 describe("permissionHint", () => {
   it("points a 403 at the Weave Checks App installation, not the workflow token", () => {
-    assert.match(permissionHint(new GitHubError("x", 403)), /Weave Checks App needs Checks and Pull requests write/);
+    assert.match(
+      permissionHint(new GitHubError("x", 403)),
+      /Weave Checks App needs Checks and Pull requests write/,
+    );
     assert.doesNotMatch(permissionHint(new GitHubError("x", 403)), /GITHUB_TOKEN|permissions:/);
     assert.equal(permissionHint(new GitHubError("x", 500)), "");
     assert.equal(permissionHint(new Error("x")), "");

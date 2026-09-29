@@ -84,7 +84,7 @@ describe("parseCheckFile", () => {
   for (const key of ["name", "description", "intelligence"]) {
     it(`rejects frontmatter missing ${key}`, () => {
       const text = VALID.split("\n")
-        .filter((line) => !line.startsWith(`${key}:`))
+        .filter(line => !line.startsWith(`${key}:`))
         .join("\n");
       assert.throws(
         () => parseCheckFile(text, ".weave-checks/x.md"),
@@ -108,7 +108,11 @@ describe("parseCheckFile", () => {
   it("rejects legacy model and cluster frontmatter instead of silently ignoring it", () => {
     for (const legacy of ["model: claude-haiku-4-5", "cluster: low"]) {
       assert.throws(
-        () => parseCheckFile(VALID.replace("intelligence: low", `intelligence: low\n${legacy}`), "checks/x.md"),
+        () =>
+          parseCheckFile(
+            VALID.replace("intelligence: low", `intelligence: low\n${legacy}`),
+            "checks/x.md",
+          ),
         /unknown frontmatter key/,
       );
     }
@@ -126,11 +130,21 @@ describe("parseCheckFile", () => {
 
   it("rejects unknown frontmatter keys", () => {
     const text = VALID.replace("intelligence: low", "intelligence: low\nowner: platform");
-    assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unknown frontmatter key "owner"/);
+    assert.throws(
+      () => parseCheckFile(text, ".weave-checks/x.md"),
+      /unknown frontmatter key "owner"/,
+    );
   });
 
   it("rejects YAML syntax the dependency-free frontmatter reader does not support", () => {
-    for (const value of ['"Quoted Name"', "'Quoted Name'", "Name # inline comment", ">-", "[one, two]", "{key: value}"]) {
+    for (const value of [
+      '"Quoted Name"',
+      "'Quoted Name'",
+      "Name # inline comment",
+      ">-",
+      "[one, two]",
+      "{key: value}",
+    ]) {
       const text = VALID.replace("name: Example Check", `name: ${value}`);
       assert.throws(
         () => parseCheckFile(text, "checks/x.md"),
@@ -141,7 +155,10 @@ describe("parseCheckFile", () => {
   });
 
   it("includes the file path in errors", () => {
-    assert.throws(() => parseCheckFile("nope", ".weave-checks/broken.md"), /\.weave-checks\/broken\.md/);
+    assert.throws(
+      () => parseCheckFile("nope", ".weave-checks/broken.md"),
+      /\.weave-checks\/broken\.md/,
+    );
   });
 });
 
@@ -169,8 +186,14 @@ describe("parseCheckFile policies", () => {
     const policy = policyFrom({ allowedIntelligence: ["low", "medium"] });
     assert.equal(parseCheckFile(VALID, "checks/x.md", policy).model, "haiku");
     const high = VALID.replace("intelligence: low", "intelligence: high");
-    assert.throws(() => parseCheckFile(high, "checks/x.md", policy), /unsupported intelligence "high"/);
-    assert.throws(() => policyFrom({ allowedIntelligence: ["fast"] }), /unsupported intelligence in allowlist/);
+    assert.throws(
+      () => parseCheckFile(high, "checks/x.md", policy),
+      /unsupported intelligence "high"/,
+    );
+    assert.throws(
+      () => policyFrom({ allowedIntelligence: ["fast"] }),
+      /unsupported intelligence in allowlist/,
+    );
   });
 
   it("accepts an empty allowlist as all four supported values", () => {
@@ -193,10 +216,10 @@ describe("parseCheckFile policies", () => {
 
 describe("parseIgnoreList", () => {
   it("skips comments, blanks, and trailing slashes", () => {
-    assert.deepEqual(
-      parseIgnoreList("# research\n\nresearch/\n  vendor  \n"),
-      ["research", "vendor"],
-    );
+    assert.deepEqual(parseIgnoreList("# research\n\nresearch/\n  vendor  \n"), [
+      "research",
+      "vendor",
+    ]);
   });
 
   it("treats an empty file as no exclusions", () => {
@@ -205,10 +228,10 @@ describe("parseIgnoreList", () => {
   });
 
   it("accepts wildcards below a literal directory prefix", () => {
-    assert.deepEqual(
-      parseIgnoreList("server/internal/db/*.sql.go\nvendor/?/generated[0-9].go\n"),
-      ["server/internal/db/*.sql.go", "vendor/?/generated[0-9].go"],
-    );
+    assert.deepEqual(parseIgnoreList("server/internal/db/*.sql.go\nvendor/?/generated[0-9].go\n"), [
+      "server/internal/db/*.sql.go",
+      "vendor/?/generated[0-9].go",
+    ]);
   });
 
   it("rejects unanchored wildcard patterns", () => {
@@ -292,7 +315,7 @@ describe("buildMatrix", () => {
     const b = file(VALID.replace("Example Check", "B"), ".weave-checks/b.md");
     const a = file(VALID.replace("Example Check", "A"), ".weave-checks/a.md");
     assert.deepEqual(
-      buildMatrix([b, a]).map((entry) => entry.slug),
+      buildMatrix([b, a]).map(entry => entry.slug),
       ["a", "b"],
     );
   });
@@ -313,7 +336,10 @@ describe("parseAddedLines", () => {
     ].join("\n");
 
     const lines = parseAddedLines(diff);
-    assert.deepEqual([...lines.get("foo.go")].sort((a, b) => a - b), [11, 12, 33]);
+    assert.deepEqual(
+      [...lines.get("foo.go")].sort((a, b) => a - b),
+      [11, 12, 33],
+    );
   });
 
   it("handles a single-line hunk with no count", () => {
@@ -440,9 +466,7 @@ describe("validateResult", () => {
       {
         verdict: VERDICT.FAIL,
         reason: "r",
-        suggestions: [
-          { file: "foo.go", start_line: 10, line: 99, comment: "c" },
-        ],
+        suggestions: [{ file: "foo.go", start_line: 10, line: 99, comment: "c" }],
       },
       addedLines,
     );
@@ -464,7 +488,10 @@ describe("validateResult", () => {
   });
 
   it("throws on a malformed verdict so the job can go neutral", () => {
-    assert.throws(() => validateResult({ verdict: "MAYBE", reason: "r" }, addedLines), /invalid verdict/);
+    assert.throws(
+      () => validateResult({ verdict: "MAYBE", reason: "r" }, addedLines),
+      /invalid verdict/,
+    );
   });
 
   it("throws on a missing reason", () => {
@@ -479,7 +506,10 @@ describe("validateResult", () => {
   // the main review schema no longer carries it -- a stale field from an old
   // prompt must not be silently honored.
   it("ignores a stray resolved_thread_ids field", () => {
-    const out = validateResult({ verdict: "PASS", reason: "clean", resolved_thread_ids: ["T1"] }, addedLines);
+    const out = validateResult(
+      { verdict: "PASS", reason: "clean", resolved_thread_ids: ["T1"] },
+      addedLines,
+    );
     assert.equal(out.resolvedThreadIds, undefined);
     assert.deepEqual(Object.keys(out).sort(), [
       "accepted",
@@ -548,12 +578,18 @@ describe("parseStructuredOutput", () => {
 describe("interpretResult", () => {
   it("returns ok with the structured_output object when present", () => {
     const cli = { subtype: "success", structured_output: { verdict: "PASS", reason: "clean" } };
-    assert.deepEqual(interpretResult(cli), { outcome: INTERPRET_OUTCOME.OK, value: { verdict: "PASS", reason: "clean" } });
+    assert.deepEqual(interpretResult(cli), {
+      outcome: INTERPRET_OUTCOME.OK,
+      value: { verdict: "PASS", reason: "clean" },
+    });
   });
 
   it("parses a stringified structured_output into ok", () => {
     const cli = { subtype: "success", structured_output: '{"verdict":"FAIL","reason":"r"}' };
-    assert.deepEqual(interpretResult(cli), { outcome: INTERPRET_OUTCOME.OK, value: { verdict: "FAIL", reason: "r" } });
+    assert.deepEqual(interpretResult(cli), {
+      outcome: INTERPRET_OUTCOME.OK,
+      value: { verdict: "FAIL", reason: "r" },
+    });
   });
 
   // Authored synthetic fixture for the CLI-success/no-structured-output case.
@@ -690,8 +726,8 @@ describe("DEDUP_SCHEMA", () => {
 describe("fixture checks directory", () => {
   const files = fs
     .readdirSync(CHECKS_DIR)
-    .filter((name) => isCheckFile(name))
-    .map((name) => ({
+    .filter(name => isCheckFile(name))
+    .map(name => ({
       path: `.weave-checks/${name}`,
       text: fs.readFileSync(path.join(CHECKS_DIR, name), "utf8"),
     }));
@@ -700,7 +736,10 @@ describe("fixture checks directory", () => {
     const matrix = buildMatrix(files);
     assert.ok(matrix.length > 0, "expected at least one check");
     for (const entry of matrix) {
-      assert.ok(SUPPORTED_INTELLIGENCE.has(entry.intelligence), `${entry.path}: ${entry.intelligence}`);
+      assert.ok(
+        SUPPORTED_INTELLIGENCE.has(entry.intelligence),
+        `${entry.path}: ${entry.intelligence}`,
+      );
       assert.ok(["haiku", "sonnet", "opus"].includes(entry.model), `${entry.path}: ${entry.model}`);
       assert.equal(entry.cluster, entry.intelligence);
     }
@@ -735,7 +774,7 @@ describe("formatReviewedMarker", () => {
 });
 
 describe("everyCheckReviewed", () => {
-  const states = (...outcomes) => outcomes.map((outcome) => ({ outcome }));
+  const states = (...outcomes) => outcomes.map(outcome => ({ outcome }));
 
   it("is true when every check passed", () => {
     assert.ok(everyCheckReviewed(states(OUTCOME.PASS, OUTCOME.PASS)));
