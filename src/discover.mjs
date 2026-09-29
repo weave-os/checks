@@ -19,7 +19,7 @@ export const DEFAULT_CHECKS_DIR = ".weave-checks";
 // directory yields repo-relative paths the runner can join onto the repo root.
 export function discoverChecks(
   checksDir,
-  { repoDir = ".", policy = WEAVE_POLICY, validateCheck = null } = {},
+  { repoDir = ".", policy = WEAVE_POLICY } = {},
 ) {
   const dir = path.resolve(repoDir, checksDir);
   let entries;
@@ -35,7 +35,7 @@ export function discoverChecks(
       path: path.posix.join(checksDir.split(path.sep).join("/"), name),
       text: fs.readFileSync(path.join(dir, name), "utf8"),
     }));
-  const matrix = buildMatrix(files, policy, validateCheck);
+  const matrix = buildMatrix(files, policy);
   if (matrix.length === 0) {
     throw new Error(`no checks found in ${checksDir}`);
   }

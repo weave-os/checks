@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { policyFrom } from "./parse.mjs";
 
-// Splits a comma- or newline-separated list input, dropping blanks.
 export function splitList(value) {
   return (value ?? "")
     .split(/[\s,]+/)

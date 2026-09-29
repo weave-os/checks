@@ -62,7 +62,7 @@ const CONTENT_BLOCK_TYPE = {
 };
 
 export function formatTranscriptSection(phase, sessions) {
-  if (!Array.isArray(sessions) || sessions.length === 0) return "";
+  if (sessions.length === 0) return "";
   const summaryLabel =
     sessions.length === 1
       ? `${phase} transcript`
@@ -146,7 +146,7 @@ export function summarizeTranscript(text) {
 }
 
 function renderSessionBlock(session, byteBudget) {
-  const text = typeof session.text === "string" ? session.text : "";
+  const text = session.text;
   if (text === "" && (typeof session.sessionId !== "string" || session.sessionId === "")) {
     return null;
   }

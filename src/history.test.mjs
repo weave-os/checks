@@ -82,7 +82,7 @@ describe("markerCodec", () => {
   });
 
   it("is the legacy codec by default", () => {
-    assert.equal(markerCodec().format("x"), formatMarker("x"));
+    assert.equal(markerCodec().format("x"), "<!-- weave-check:x -->");
   });
 
   it("classifies threads by either marker", () => {

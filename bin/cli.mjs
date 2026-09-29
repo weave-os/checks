@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-// weave-checks: the package's command-line entry point.
-//
-//   weave-checks run            Review the working tree's changes locally.
-//   weave-checks list           Validate and list the checks in a directory.
-//   weave-checks print-schema   Print the structured-output JSON schema.
-//
-// Action internals (run by action.yml; configured through the environment
-// the action sets, not flags):
-//
-//   weave-checks create-aggregate | prepare | close-aggregate | report
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";

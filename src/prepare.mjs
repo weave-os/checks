@@ -119,8 +119,7 @@ export async function findLastReviewedSha({
       log(`Could not read check runs for ${sha} (${error.message}); reviewing from the merge base.`);
       return null;
     }
-    const marker = runs?.check_runs?.[0]?.external_id ?? null;
-    if (marker === formatReviewedMarker(sha)) return sha;
+    if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha)) return sha;
   }
   return null;
 }
@@ -270,10 +269,10 @@ export async function preparePullRequest({
 
   const diff = (from, pathspecs) => git(["diff", "-U0", from, headSha, "--", ...pathspecs], { cwd: repoDir });
   const stat = (from, pathspecs) => git(["diff", "--stat", from, headSha, "--", ...pathspecs], { cwd: repoDir });
-  const whole = [".", ...ignorePathspecs];
+  const fullTreePathspecs = [".", ...ignorePathspecs];
 
-  const fullDiff = diff(mergeBaseSha, whole);
-  const fullStat = stat(mergeBaseSha, whole);
+  const fullDiff = diff(mergeBaseSha, fullTreePathspecs);
+  const fullStat = stat(mergeBaseSha, fullTreePathspecs);
   writeFileSync(out(PREPARED_FILES.FULL_DIFF), fullDiff);
   writeFileSync(out(PREPARED_FILES.FULL_STAT), fullStat);
 
@@ -293,11 +292,11 @@ export async function preparePullRequest({
           diff: [diff(mergeBaseSha, [...include, ...ignorePathspecs])],
           stat: [stat(mergeBaseSha, [...include, ...ignorePathspecs])],
         };
-    reviewDiff = Buffer.concat([...parts.diff, diff(reviewBaseSha, [...whole, ...exclude])]);
-    reviewStat = Buffer.concat([...parts.stat, stat(reviewBaseSha, [...whole, ...exclude])]);
+    reviewDiff = Buffer.concat([...parts.diff, diff(reviewBaseSha, [...fullTreePathspecs, ...exclude])]);
+    reviewStat = Buffer.concat([...parts.stat, stat(reviewBaseSha, [...fullTreePathspecs, ...exclude])]);
   } else {
-    reviewDiff = diff(reviewBaseSha, whole);
-    reviewStat = stat(reviewBaseSha, whole);
+    reviewDiff = diff(reviewBaseSha, fullTreePathspecs);
+    reviewStat = stat(reviewBaseSha, fullTreePathspecs);
   }
 
   // An empty review scope over a non-empty PR means this push changed

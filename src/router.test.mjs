@@ -328,11 +328,6 @@ describe("weaveRouterProvider", () => {
     }
   });
 
-  it("rejects a check with no intelligence", () => {
-    assert.match(provider().validateCheck({ intelligence: null }), /requires intelligence/);
-    assert.equal(provider().validateCheck({ intelligence: "low", cluster: "low" }), null);
-  });
-
   it("prices through the session-cost endpoint, labelled as router cost", async () => {
     const fetchFn = fakeFetch([jsonResponse(200, { actual_cost_usd_micros: 1_500_000 })]);
     const routed = weaveRouterProvider({

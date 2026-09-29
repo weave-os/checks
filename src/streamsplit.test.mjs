@@ -241,8 +241,6 @@ describe("summarizeTranscript", () => {
 describe("formatTranscriptSection", () => {
   it("returns the empty string when no sessions were recorded", () => {
     assert.equal(formatTranscriptSection("Reviewer", []), "");
-    assert.equal(formatTranscriptSection("Reviewer", undefined), "");
-    assert.equal(formatTranscriptSection("Reviewer", null), "");
   });
 
   it("renders a single-session block with a one-attempt summary label", () => {

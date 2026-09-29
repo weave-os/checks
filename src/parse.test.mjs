@@ -129,6 +129,17 @@ describe("parseCheckFile", () => {
     assert.throws(() => parseCheckFile(text, ".weave-checks/x.md"), /unknown frontmatter key "owner"/);
   });
 
+  it("rejects YAML syntax the dependency-free frontmatter reader does not support", () => {
+    for (const value of ['"Quoted Name"', "'Quoted Name'", "Name # inline comment", ">-", "[one, two]", "{key: value}"]) {
+      const text = VALID.replace("name: Example Check", `name: ${value}`);
+      assert.throws(
+        () => parseCheckFile(text, "checks/x.md"),
+        /frontmatter values must be unquoted single-line scalars/,
+        value,
+      );
+    }
+  });
+
   it("includes the file path in errors", () => {
     assert.throws(() => parseCheckFile("nope", ".weave-checks/broken.md"), /\.weave-checks\/broken\.md/);
   });
@@ -177,21 +188,6 @@ describe("parseCheckFile policies", () => {
         /must use only lowercase letters, digits, and hyphens/,
       );
     }
-  });
-});
-
-describe("buildMatrix provider validation", () => {
-  it("runs provider validation on the normalized intelligence-derived cluster", () => {
-    const validateCheck = (check) =>
-      check.intelligence === "low" && check.model === "haiku" && check.cluster === "low"
-        ? null
-        : "expected matching intelligence, alias, and cluster";
-    assert.equal(buildMatrix([file(VALID, "checks/a.md")], GENERIC_POLICY, validateCheck).length, 1);
-    const high = VALID.replace("intelligence: low", "intelligence: high");
-    assert.throws(
-      () => buildMatrix([file(high, "checks/a.md")], GENERIC_POLICY, validateCheck),
-      /checks\/a\.md: expected matching intelligence, alias, and cluster/,
-    );
   });
 });
 
@@ -560,13 +556,11 @@ describe("interpretResult", () => {
     assert.deepEqual(interpretResult(cli), { outcome: INTERPRET_OUTCOME.OK, value: { verdict: "FAIL", reason: "r" } });
   });
 
-  // This is the exact shape from the neutral run on PR #11658
-  // (.weave-checks/enum-type-safety.md): subtype=success, no structured_output,
-  // the model narrated the tool call in prose instead of making it.
+  // Authored synthetic fixture for the CLI-success/no-structured-output case.
   it("is retryable when the CLI succeeded but the model skipped the tool call", () => {
     const cli = {
       subtype: "success",
-      result: "I have already called the **StructuredOutput** tool in my response above.",
+      result: "The response omitted structured output.",
     };
     const interpreted = interpretResult(cli);
     assert.equal(interpreted.outcome, "retryable");

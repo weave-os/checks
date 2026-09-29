@@ -14,9 +14,6 @@
 //   resolveCost({ sessionId, resultEvent, model, cluster })
 //                 -- Promise<{ cost, error }> or { cost, error }; a null cost
 //                    means unknown, never zero, and `error` says why
-//   validateCheck(check)
-//                 -- optional; an error string for a check this provider
-//                    cannot serve (Weave Router needs a cluster), else null
 
 import { anthropicProvider } from "./providers/anthropic.mjs";
 import { inheritProvider } from "./providers/inherit.mjs";

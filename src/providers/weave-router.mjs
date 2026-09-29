@@ -307,9 +307,5 @@ export function weaveRouterProvider({
     envFor: ({ cluster }) => routerEnvironment(routerKey, cluster, { baseUrl, userEmail }),
     resolveCost: ({ sessionId }) =>
       routerSessionCost(sessionId, weaveAPIKey, { apiBaseUrl, ...costOptions }),
-    validateCheck: (check) =>
-      check.intelligence === null || check.intelligence === undefined
-        ? "provider weave-router requires intelligence in the check's frontmatter"
-        : null,
   });
 }

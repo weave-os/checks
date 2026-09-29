@@ -399,19 +399,19 @@ export function reviewsToHide(checkThreads, dismissedIds, resolvedThisRun) {
     const alreadyDismissed = thread.reviewState === REVIEW_STATE.DISMISSED || dismissedSet.has(reviewId);
     if (!allThreadsResolved && !alreadyDismissed) continue;
 
-    const last = hidden.get(thread.reviewGraphqlId);
+    const existingReviewId = hidden.get(thread.reviewGraphqlId);
     // Dedup reviews that share the same GraphQL id (very common: every thread
     // of one review points at the same id). Last-write-wins is safe because
     // we only ever read two booleans off the thread record.
-    if (last === undefined) {
+    if (existingReviewId === undefined) {
       hidden.set(thread.reviewGraphqlId, reviewId);
       continue;
     }
-    if (last !== reviewId) {
+    if (existingReviewId !== reviewId) {
       // Two distinct REST ids under the same GraphQL id would mean a corrupt
       // API response; treat as data integrity fail rather than silently
       // picking one -- a mistake here hides the wrong review.
-      throw new Error(`review ${thread.reviewGraphqlId} reported with conflicting REST ids (${last} vs ${reviewId})`);
+      throw new Error(`review ${thread.reviewGraphqlId} reported with conflicting REST ids (${existingReviewId} vs ${reviewId})`);
     }
   }
   return [...hidden.entries()].map(([graphqlId, reviewId]) => ({ reviewId, reviewGraphqlId: graphqlId }));

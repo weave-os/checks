@@ -67,10 +67,12 @@ export const SLUG_PATTERN = /^[a-z0-9-]+$/;
 
 const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 
-// Frontmatter is a fixed three-key contract (name, description, and
-// intelligence), so a line-oriented reader is enough -- no YAML dependency,
-// and anything that doesn't fit the contract is rejected instead of
-// half-understood.
+// Frontmatter is a deliberately small line-oriented metadata format, not a
+// general YAML parser: name, description, and intelligence are single-line
+// plain scalars. Quotes, comments, collections, tags, and block scalars are
+// rejected rather than being accepted with YAML semantics the parser does not
+// implement. This keeps the package dependency-free without silently
+// misreading valid-but-unsupported YAML.
 // Keys the contract permits in a check's frontmatter. Anything else is
 // rejected so a misspelled or made-up field fails discovery loudly.
 const FRONTMATTER_KEYS = new Set(["name", "description", "intelligence"]);
@@ -98,6 +100,14 @@ function parseFrontmatter(text) {
     }
     if (!FRONTMATTER_KEYS.has(key)) {
       throw new Error(`unknown frontmatter key "${key}" (allowed: ${[...FRONTMATTER_KEYS].sort().join(", ")})`);
+    }
+    if (
+      /^["'[{>|&*!%@`]/.test(value) ||
+      /(?:^|\s)#/.test(value)
+    ) {
+      throw new Error(
+        `${rawLine}: frontmatter values must be unquoted single-line scalars without comments or YAML structures`,
+      );
     }
     if (fields.has(key)) {
       throw new Error(`duplicate frontmatter key: ${key}`);
@@ -243,11 +253,7 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
 // Builds the job matrix. Display names must be unique: the check-run name is
 // derived from them, and two runs sharing a name would overwrite each other's
 // status on the PR.
-//
-// `validateCheck`, when given, is a provider's own requirement on a parsed
-// check (Weave Router rejects a check with no cluster); it returns an error
-// string or null.
-export function buildMatrix(files, policy = WEAVE_POLICY, validateCheck = null) {
+export function buildMatrix(files, policy = WEAVE_POLICY) {
   const checks = files
     .filter((file) => isCheckFile(file.path, policy.docFiles ?? DEFAULT_DOC_FILES))
     .map((file) => parseCheckFile(file.text, file.path, policy))
@@ -262,10 +268,6 @@ export function buildMatrix(files, policy = WEAVE_POLICY, validateCheck = null) 
       );
     }
     seen.set(check.name, check.path);
-    const providerError = validateCheck?.(check) ?? null;
-    if (providerError !== null) {
-      throw new Error(`${check.path}: ${providerError}`);
-    }
   }
 
   // `body` is read from disk by the runner, not carried through the matrix --

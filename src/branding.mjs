@@ -51,7 +51,6 @@ export function brandingFrom(overrides = {}) {
   return Object.freeze(branding);
 }
 
-// Reads branding overrides from the worker's environment.
 export function brandingFromEnv(env) {
   return brandingFrom({
     productName: env.WEAVE_CHECKS_PRODUCT_NAME,
