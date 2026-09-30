@@ -112,15 +112,14 @@ gh pr view "${PR_NUMBER:-}" --repo "$OWNER/$REPO" \
   -q '{number: .number, head_owner: .headRepositoryOwner.login, head_repo: .headRepository.name, branch: .headRefName, sha: .headRefOid}'
 ```
 
-If the base repository cannot be resolved from the checkout, use the base repository explicitly; never substitute the fork's head repository. Keep `head_owner`, `head_repo`, `branch`, and `sha` as separate head metadata.
+If the base repository cannot be resolved from the checkout, use the base repository explicitly; never substitute the fork's head repository.
 
 For a mid-stack PR (`gh stack view --short`), run `gh stack checkout <headRefName>` when needed, then verify `git rev-parse HEAD` equals the PR's `headRefOid`. For a non-stack PR, use the PR number and base repository so GitHub CLI can select the correct fork ref; do not check out by branch name alone:
 
 ```bash
 # Stop rather than switching away from uncommitted work.
 test -z "$(git status --porcelain)" || { echo "Working tree is dirty" >&2; exit 1; }
-LOCAL_PR_BRANCH="pr-${PR_NUMBER}-${HEAD_SHA:0:12}"
-gh pr checkout "$PR_NUMBER" --repo "$OWNER/$REPO" --branch "$LOCAL_PR_BRANCH"
+gh pr checkout "$PR_NUMBER" --repo "$OWNER/$REPO" --branch "pr-${PR_NUMBER}-${HEAD_SHA:0:12}"
 test "$(git rev-parse HEAD)" = "$HEAD_SHA" || { echo "PR head SHA mismatch" >&2; exit 1; }
 ```
 
