@@ -4,18 +4,26 @@
 ![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 [![Tests](https://github.com/weave-os/checks/actions/workflows/test.yml/badge.svg)](https://github.com/weave-os/checks/actions/workflows/test.yml)
 
-Software factories have a QA problem. Weave Checks helps your factory output higher quality software, by letting you enforce the principles you care about (without a human reading every line).
+Weave Checks enforce the principles you care about (without a human reading every line).
+
+Weave Checks runs an agent against every PR, ensuring it meets criteria you define in Markdown files. Each Markdown file is a single code quality standard you want to uphold.
+
+The agent checks that the standard is upheld and leaves a review comment if it's not. It self-resolves once its own comments have been addressed. Here's an [example](https://github.com/weave-os/checks/pull/1#pullrequestreview-5348408708):
+
+![weave checks thread example](./img/weave-checks-example.png)
+
+## Why use this?
 
 Historically, code was reviewed by humans. Two of the most important goals of human reviews typically were:
 
-1. Finding bugs
-2. Keeping code quality consistent by communicating the standards of the codebase
+1. Keeping code quality consistent by communicating the standards of the codebase
+2. Finding bugs
 
 AI makes human code reviews unscalable. A software factory cannot rely on a human validating every diff. So we need to replace #1 and #2 somehow.
 
-AI reviewers (e.g. Greptile, Cursor BugBot, CodeRabbit, Cubic, etc.) solve half of the problem: they're very good at #1. But they do not do #2 at all.
+AI reviewers (e.g. Greptile, Cursor BugBot, CodeRabbit, Cubic, etc.) solve half of the problem: they're very good at #2. But they do not do #1 at all.
 
-Weave Checks is designed to solve #2, with the same scalability as AI bug reviewers.
+Weave Checks is designed to solve #1, with the same scalability as AI bug reviewers.
 
 Weave Checks works best when powered by the [Weave Router](https://weaveos.com/router) - it costs 10x less with identical performance. [See the full breakdown below](#cost).
 
@@ -24,7 +32,7 @@ Weave Checks works best when powered by the [Weave Router](https://weaveos.com/r
 To set up Weave Checks for your own repository:
 
 1. [Install the Weave Checks app](https://github.com/apps/weave-checks/installations/new)
-1. [Create a Weave Router key](https://router.weaveos.com/build), copy it to your clipboard
+1. [Create a Weave Router key](https://router.weaveos.com/build?name=Weave+Checks&to=https%3A%2F%2Fgithub.com%2Fweave-os%2Fchecks), copy it to your clipboard
 1. Add the key as a repository secret called `WEAVE_ROUTER_KEY` (Settings -> Secrets and variables -> Actions -> New repository secret)
    - If you're setting up across >1 repo at once, we recommend using an Organization secret instead
 1. Add the workflow to your repo by running this from your repo root:
@@ -97,6 +105,20 @@ npx @weave-os/checks run
 ## Acknowledgment
 
 > The generic starter-check corpus and per-concern review format adapt material and design from [Continue Checks](https://github.com/continuedev/checks), Copyright 2025 Continue Dev, Inc., Apache-2.0. See [`NOTICE`](NOTICE) for attribution and [`LICENSE`](LICENSE) for this package's license.
+
+## FAQ
+
+**Q: Why do I need to install a GitHub App to run this?**
+
+A: This lets us do a few helpful things:
+
+- Write reviews as a distinct identity (`weave-checks[bot]` rather than `github-actions[bot]`)
+- Publish check statuses on PRs
+- Auto resolve comments & threads when addressed
+
+In our own experience this makes the checks significantly more useful.
+
+However we expose the CLI (`npx @weave-os/checks`) if you want to run checks locally or customize exactly how they work in CI - this does not require a GitHub app.
 
 ## Documentation
 
