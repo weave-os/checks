@@ -224,6 +224,55 @@ describe("weave-checks run", () => {
   });
 });
 
+describe("CLI help", () => {
+  it("aligns option descriptions for list and run", () => {
+    const space = workspace();
+    const help = [
+      [
+        "list",
+        [
+          "Checks directory",
+          "Repository root",
+          "anthropic |",
+          "Comma-separated tiers",
+          "Markdown files",
+          "Output format",
+        ],
+      ],
+      [
+        "run",
+        [
+          "Checks directory",
+          "Repository root",
+          "anthropic |",
+          "Comma-separated tiers",
+          "Markdown files",
+          "Branch the change",
+          "Diff against",
+          "Resolve the merge",
+          "Review a committed",
+          "Comma-separated checks",
+          "text | markdown",
+          "Also write",
+          "Keep prompts",
+          "Checks run at once",
+        ],
+      ],
+    ];
+
+    for (const [command, descriptions] of help) {
+      const result = space.cli([command, "--help"]);
+      assert.equal(result.status, 0, result.stderr);
+      const lines = result.stdout.split("\n");
+      for (const description of descriptions) {
+        const line = lines.find(candidate => candidate.includes(description));
+        assert.ok(line, `missing help text: ${description}`);
+        assert.equal(line.indexOf(description), 32, line);
+      }
+    }
+  });
+});
+
 describe("weave-checks list", () => {
   it("lists discovered checks and fails loudly on a bad one", () => {
     const space = workspace();
