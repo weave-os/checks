@@ -44,6 +44,22 @@ on:
         description: incremental (review only what changed since the last fully reviewed commit) or merge-base (always review the whole PR).
         type: string
         default: incremental
+      product-name:
+        description: Name for one check in agent prompts.
+        type: string
+        default: Weave Check
+      check-run-prefix:
+        description: Prefix of each check run's name.
+        type: string
+        default: Weave Check
+      aggregate-name:
+        description: Name of the aggregate check run.
+        type: string
+        default: Weave Checks
+      marker-prefix:
+        description: Prefix of the hidden marker on every comment.
+        type: string
+        default: weave-check
       concurrency:
         description: Checks run at once.
         type: number
@@ -204,6 +220,10 @@ jobs:
           use-default-checks: ${{ inputs.use-default-checks }}
           doc-files: ${{ inputs.doc-files }}
           diff-base: ${{ inputs.diff-base }}
+          product-name: ${{ inputs.product-name }}
+          check-run-prefix: ${{ inputs.check-run-prefix }}
+          aggregate-name: ${{ inputs.aggregate-name }}
+          marker-prefix: ${{ inputs.marker-prefix }}
           concurrency: ${{ inputs.concurrency }}
           claude-code-version: ${{ inputs.claude-code-version }}
           fail-on-findings: ${{ inputs.fail-on-findings }}
