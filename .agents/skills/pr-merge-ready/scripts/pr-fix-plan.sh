@@ -393,8 +393,13 @@ def related_lines($pattern_index; $source_path; $code_context):
 
 # A null endpoint falls back to the other endpoint of the same range.
 def ranges_overlap($start_a; $end_a; $start_b; $end_b):
-  ($start_a // $end_a // 0) <= ($end_b // $start_b // infinite)
-  and ($start_b // $end_b // 0) <= ($end_a // $start_a // infinite);
+  ($start_a // $end_a) as $a_start
+  | ($end_a // $start_a) as $a_end
+  | ($start_b // $end_b) as $b_start
+  | ($end_b // $start_b) as $b_end
+  | $a_start != null and $a_end != null and $b_start != null and $b_end != null
+    and $a_start <= $b_end
+    and $b_start <= $a_end;
 
 def comments_overlap($a; $b):
   $a.file != null and $a.file == $b.file
