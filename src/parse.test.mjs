@@ -30,6 +30,7 @@ import {
   isCheckFile,
   parseIgnoreList,
   OUTCOME,
+  NEUTRAL_CAUSE,
   parseAddedLines,
   parseCheckFile,
   parseStructuredOutput,
@@ -667,6 +668,7 @@ describe("interpretResult", () => {
     };
     const interpreted = interpretResult(cli);
     assert.equal(interpreted.outcome, "retryable");
+    assert.equal(interpreted.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
     assert.match(interpreted.value.error, /structured_output was missing/);
     assert.equal(interpreted.value.rawResult, cli.result);
   });
@@ -677,7 +679,9 @@ describe("interpretResult", () => {
     // a schema/serialization bug, not a skipped tool call, so a retry isn't
     // expected to help.
     const cli = { subtype: "success", structured_output: "{not json" };
-    assert.equal(interpretResult(cli).outcome, "definite");
+    const interpreted = interpretResult(cli);
+    assert.equal(interpreted.outcome, "definite");
+    assert.equal(interpreted.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
   });
 
   it("recovers a verdict JSON literal embedded in prose as ok", () => {
@@ -728,17 +732,21 @@ describe("interpretResult", () => {
     const cli = { subtype: "error_max_turns" };
     const interpreted = interpretResult(cli);
     assert.equal(interpreted.outcome, "definite");
+    assert.equal(interpreted.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
     assert.match(interpreted.value.error, /error_max_turns/);
   });
 
   it("is definite when is_error is true even with subtype success", () => {
     const cli = { subtype: "success", is_error: true };
     assert.equal(interpretResult(cli).outcome, "definite");
+    assert.equal(interpretResult(cli).cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
   });
 
-  it("is definite for a null or non-object cli", () => {
+  it("is definite for a null or non-object cli and marks it as infrastructure", () => {
     assert.equal(interpretResult(null).outcome, "definite");
+    assert.equal(interpretResult(null).cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
     assert.equal(interpretResult(undefined).outcome, "definite");
+    assert.equal(interpretResult(undefined).cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
   });
 
   it("is retryable when structured_output is an array, not an object", () => {

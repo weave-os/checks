@@ -5,7 +5,14 @@ import path from "node:path";
 import process from "node:process";
 import { afterEach, describe, it } from "node:test";
 
-import { CLI_RESULT_SUBTYPE, CLUSTER_LOW, MODEL_HAIKU, OUTCOME, VERDICT } from "./parse.mjs";
+import {
+  CLI_RESULT_SUBTYPE,
+  CLUSTER_LOW,
+  MODEL_HAIKU,
+  NEUTRAL_CAUSE,
+  OUTCOME,
+  VERDICT,
+} from "./parse.mjs";
 import {
   evaluateCheck,
   formatDuration,
@@ -414,6 +421,7 @@ describe("runClaude", () => {
 
     assert.equal(invocation.code, 3);
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
     assert.equal(result.error, "Claude CLI exited 3");
   });
 
@@ -436,6 +444,7 @@ describe("runClaude", () => {
     const result = normalize(invocation, new Map());
 
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
     assert.equal(result.error, "Claude CLI exited 1: Prompt is too long");
   });
 });
@@ -458,6 +467,14 @@ describe("normalize", () => {
       duration_ms: 1500,
     };
   }
+
+  it("keeps malformed structured output neutral and classifies it as output", () => {
+    const result = normalize(invocation(cli("{not json")), addedLines);
+
+    assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
+    assert.match(result.error, /was not valid JSON/);
+  });
 
   it("accepts a PASS verdict", () => {
     const result = normalize(
@@ -533,6 +550,7 @@ describe("normalize", () => {
       addedLines,
     );
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
     assert.match(result.error, /no valid anchored findings/);
     assert.equal(result.proseFallbacks.length, 0);
     assert.equal(result.rejected.length, 1);
@@ -543,6 +561,7 @@ describe("normalize", () => {
   it("treats a missing terminal result event as neutral with an unknown duration", () => {
     const result = normalize(invocation(null), addedLines);
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
     assert.match(result.error, /no terminal result event/);
     assert.equal(result.duration, null);
   });
@@ -561,6 +580,7 @@ describe("normalize", () => {
       addedLines,
     );
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
     assert.equal(result.retryable, true);
   });
 });
@@ -574,6 +594,7 @@ describe("validateAndFinalize", () => {
       new Map(),
     );
     assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INVALID_OUTPUT);
     assert.match(result.error, /Invalid structured result/);
     assert.equal(result.cost, 0.25);
     assert.equal(result.duration, 400);

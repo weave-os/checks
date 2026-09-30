@@ -206,7 +206,7 @@ ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 
 #### Outputs
 
-`pass`, `flagged`, `neutral`, and `total-cost`. Result counts distinguish findings (`flagged`) from operational misses (`neutral`). `total-cost` is empty when any contributing cost is unknown. Reviews are posted inline as `COMMENT` reviews; resolution and deduplication judges always run when they have work. These behaviors are fixed, not configurable. There are no per-invocation cost ceilings.
+`pass`, `flagged`, `neutral`, and `total-cost`. Result counts distinguish findings (`flagged`) from non-failing outcomes (`neutral`), including unusable model output; each neutral check result includes a `cause` of `infrastructure` or `invalid_output`. The aggregate check fails only for infrastructure errors. `total-cost` is empty when any contributing cost is unknown. Reviews are posted inline as `COMMENT` reviews; resolution and deduplication judges always run when they have work. These behaviors are fixed, not configurable. There are no per-invocation cost ceilings.
 
 ### Local CLI
 
@@ -233,7 +233,7 @@ WEAVE_CHECKS_PROVIDER_ENV='ANTHROPIC_BASE_URL=https://llm-gateway.example.com' \
 npx @weave-os/checks run --provider anthropic --checks-dir .weave-checks --base origin/main --format markdown
 ```
 
-`run` exits 1 when at least one check flags findings, 2 for invalid options or setup, and 0 when there are no findings. Use `--no-fail` to report findings without a non-zero exit. Neutral operational misses do not fail the run. `--format` supports `text`, `markdown`, and `json`; `--output <file>` writes the JSON result as well. Prompts, transcripts, and per-check results are stored in a temporary directory by default; `--artifacts-dir` keeps them at the path you choose. These artifacts contain the diff and agent output, so handle them as repository data.
+`run` exits 1 when at least one check flags findings, 2 for invalid options or setup, and 0 when there are no findings. Use `--no-fail` to report findings without a non-zero exit. Neutral outcomes do not fail the run. `--format` supports `text`, `markdown`, and `json`; `--output <file>` writes the JSON result as well. Prompts, transcripts, and per-check results are stored in a temporary directory by default; `--artifacts-dir` keeps them at the path you choose. These artifacts contain the diff and agent output, so handle them as repository data.
 
 `list --format json` prints the validated matrix. `print-schema` prints the result schema; `print-schema --kind resolution` and `--kind dedup` print the judge schemas.
 

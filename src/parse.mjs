@@ -599,6 +599,11 @@ export const OUTCOME = Object.freeze({
   FAIL: "fail",
 });
 
+export const NEUTRAL_CAUSE = Object.freeze({
+  INFRASTRUCTURE: "infrastructure",
+  INVALID_OUTPUT: "invalid_output",
+});
+
 // The outcome names published in JSON results and action outputs. Internally
 // a FAIL verdict is OUTCOME.FAIL, but it never publishes as a failed check
 // (see worker.mjs's header), so the public vocabulary says what it is: the
@@ -659,8 +664,8 @@ export const CLI_RESULT_SUBTYPE = Object.freeze({
 
 // Closed set of interpretResult() outcomes. OK means the verdict object is
 // ready to validate; RETRYABLE means the CLI succeeded but skipped
-// structured output (worth one more ask); DEFINITE is a crash or parse
-// error that would just repeat.
+// structured output (worth one more ask); DEFINITE is not worth retrying.
+// `cause` separates infrastructure failures from unusable model output.
 export const INTERPRET_OUTCOME = Object.freeze({
   OK: "ok",
   RETRYABLE: "retryable",
@@ -676,8 +681,8 @@ export const GITHUB_CONCLUSION = Object.freeze({
 // HTTP verbs the worker's GitHub REST wrapper actually sends. Kept next to
 // GITHUB_CONCLUSION so callers (worker.mjs's github()) restate nothing as
 // raw strings -- a typo "GETT" would silently 404 instead of failing loudly.
-// Operational misses and coordinator failures publish `failure`, while a
-// completed review with findings remains `neutral`.
+// Infrastructure and coordinator failures publish `failure`; findings and
+// unusable model output publish `neutral`.
 export const HTTP_METHOD = Object.freeze({
   GET: "GET",
   POST: "POST",
@@ -807,6 +812,7 @@ export function interpretResult(cli) {
   ) {
     return {
       outcome: INTERPRET_OUTCOME.DEFINITE,
+      cause: NEUTRAL_CAUSE.INFRASTRUCTURE,
       value: { error: `Claude reported ${cli?.subtype ?? cli?.api_error_status ?? "an error"}` },
     };
   }
@@ -817,6 +823,7 @@ export function interpretResult(cli) {
   } catch (error) {
     return {
       outcome: INTERPRET_OUTCOME.DEFINITE,
+      cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
       value: { error: `structured_output was a string but was not valid JSON: ${error.message}` },
     };
   }
@@ -835,6 +842,7 @@ export function interpretResult(cli) {
     } catch {
       return {
         outcome: INTERPRET_OUTCOME.RETRYABLE,
+        cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
         value: {
           error:
             "structured_output was missing and the prose result did not contain a verdict JSON object",
@@ -846,6 +854,7 @@ export function interpretResult(cli) {
 
   return {
     outcome: INTERPRET_OUTCOME.RETRYABLE,
+    cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
     value: {
       error: "structured_output was missing and the prose result had no verdict",
       rawResult: cli.result,

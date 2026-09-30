@@ -1,10 +1,9 @@
 // Runs all Weave Checks from one GitHub Actions job.
 //
-// Per-check runs are `success` only for a PASS verdict; findings and
-// individual operational misses are `neutral`. The aggregate is `failure` if
-// any check could not complete its review, including coordinator failures. A
-// completed review with findings remains neutral so dismissed findings never
-// leave a permanently-red status row.
+// Per-check runs are `success` only for a PASS verdict; every other outcome is
+// `neutral`. The aggregate is `failure` only for infrastructure errors,
+// including coordinator failures. A completed review with findings stays
+// neutral so dismissed findings never leave a permanently-red status row.
 //
 // The action creates one aggregate Check Run before starting this script.
 // This worker creates the per-check runs, runs the agents in a bounded local
@@ -45,6 +44,7 @@ import {
   RUN_MARKER,
   STATUS,
   OUTCOME,
+  NEUTRAL_CAUSE,
   GITHUB_CONCLUSION,
   CHECK_RUN_STATUS,
   HTTP_METHOD,
@@ -260,9 +260,11 @@ export async function runWorker(config, deps = {}) {
       { label: `${method} ${apiPath}`, ...transport },
     );
     if (!response.ok) {
-      throw new Error(
+      const error = new Error(
         `${method} ${apiPath}: ${response.status} ${truncateBody(response.text)} (after ${response.attempts} attempt(s))`,
       );
+      error.status = response.status;
+      throw error;
     }
     if (response.text === "") return null;
     try {
@@ -403,6 +405,7 @@ export async function runWorker(config, deps = {}) {
           check,
           status: STATUS.QUEUED,
           outcome: null,
+          cause: null,
           note: "Waiting for an agent slot.",
           checkRunId: null,
           cost: 0,
@@ -1020,17 +1023,22 @@ export async function runWorker(config, deps = {}) {
     };
     if (final) {
       payload.status = CHECK_RUN_STATUS.COMPLETED;
-      // A completed FAIL verdict stays neutral: the finding is already visible
-      // on the child's own run and should not leave a red status after a human
-      // resolves it. A check that could not complete is different -- branch
-      // protection must not pass when part of the PR went unread.
+      // A finding or unusable model output is not an infrastructure failure.
+      // Keep those neutral; fail only when a check hit an infrastructure error
+      // (or has an unknown/incomplete state, which defaults to infrastructure).
+      const infrastructureFailure = all.some(state =>
+        state.outcome === OUTCOME.NEUTRAL ?
+          state.cause !== NEUTRAL_CAUSE.INVALID_OUTPUT
+        : state.outcome !== OUTCOME.PASS && state.outcome !== OUTCOME.FAIL,
+      );
       payload.conclusion =
         pass === all.length && all.length > 0 ? GITHUB_CONCLUSION.SUCCESS
-        : !everyCheckReviewed(all) ? GITHUB_CONCLUSION.FAILURE
+        : infrastructureFailure ? GITHUB_CONCLUSION.FAILURE
         : GITHUB_CONCLUSION.NEUTRAL;
-      // This marker records which check set completed, not merely the head
-      // commit. Findings count as completed reviews; any operational miss
-      // withholds it so the next run widens back to the merge base.
+      // This marker records which check set completed a usable review, not
+      // merely the head commit. Findings count as completed reviews; any miss,
+      // including invalid model output, withholds it so the next run widens back
+      // to the merge base.
       if (everyCheckReviewed(all)) {
         payload.external_id = formatReviewedMarker(HEAD_SHA, CHECK_DIGEST);
       }
@@ -1203,6 +1211,11 @@ export async function runWorker(config, deps = {}) {
             // already happened.
             result = {
               outcome: OUTCOME.NEUTRAL,
+              // A 422 means GitHub rejected this specific review payload, not
+              // that the service is unavailable. Keep an unapplyable result
+              // neutral; auth, network, and server errors remain infrastructure.
+              cause:
+                error.status === 422 ? NEUTRAL_CAUSE.INVALID_OUTPUT : NEUTRAL_CAUSE.INFRASTRUCTURE,
               error: `Could not post review: ${error.message}`,
               cost: result.cost,
               duration: result.duration,
@@ -1237,6 +1250,8 @@ export async function runWorker(config, deps = {}) {
       );
       state.result = result;
       state.outcome = result.outcome;
+      state.cause =
+        result.outcome === OUTCOME.NEUTRAL ? (result.cause ?? NEUTRAL_CAUSE.INFRASTRUCTURE) : null;
       state.status = STATUS.COMPLETE;
       state.cost = totalCost([result.cost, judgment.cost]);
       state.durationMs = totalDuration([result.duration, judgment.duration]);
@@ -1249,9 +1264,11 @@ export async function runWorker(config, deps = {}) {
     } catch (error) {
       state.result = {
         outcome: OUTCOME.NEUTRAL,
+        cause: NEUTRAL_CAUSE.INFRASTRUCTURE,
         error: error.message ?? String(error),
       };
       state.outcome = OUTCOME.NEUTRAL;
+      state.cause = NEUTRAL_CAUSE.INFRASTRUCTURE;
       state.status = STATUS.COMPLETE;
       state.note = state.result.error;
       // The throw can land after the agent phases already ran (e.g. a
@@ -1282,6 +1299,7 @@ export async function runWorker(config, deps = {}) {
       } catch (error) {
         // Keep the master current even if an individual check-run update failed.
         state.outcome = OUTCOME.NEUTRAL;
+        state.cause = NEUTRAL_CAUSE.INFRASTRUCTURE;
         state.note = `Could not complete check run: ${error.message}`;
       }
     }
@@ -1306,6 +1324,7 @@ export async function runWorker(config, deps = {}) {
         );
         state.status = STATUS.COMPLETE;
         state.outcome = OUTCOME.NEUTRAL;
+        state.cause = NEUTRAL_CAUSE.INFRASTRUCTURE;
         state.note = `Coordinator error: ${error.message ?? error}`;
       }
     });
@@ -1414,6 +1433,7 @@ export async function runWorker(config, deps = {}) {
         cost: state.cost ?? null,
         durationMs: state.durationMs ?? null,
         detail: state.note ?? null,
+        ...(state.cause === null ? {} : { cause: state.cause }),
       })),
       totals: {
         pass: count(OUTCOME.PASS),
