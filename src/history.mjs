@@ -104,9 +104,8 @@ export function extractThreadsPage(data) {
   const pageInfo = connection.pageInfo ?? { hasNextPage: false };
   // A malformed cursor state -- more pages promised with nothing to page by
   // -- must not be accepted silently: fetchAllReviewThreads's caller would
-  // re-request the same `after` value forever. Fail loudly instead so this
-  // pass is skipped and logged (worker.mjs's history fetch is best-effort),
-  // rather than looping.
+  // re-request the same `after` value forever. Fail loudly so the worker marks
+  // the aggregate failed instead of reviewing without complete history.
   if (
     pageInfo.hasNextPage === true &&
     (typeof pageInfo.endCursor !== "string" || pageInfo.endCursor.length === 0)

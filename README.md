@@ -167,9 +167,9 @@ npx @weave-os/checks run --provider anthropic --checks-dir .weave-checks --base 
 
 ## Behavior and safety boundaries
 
-- The action creates the aggregate check run before its repository checkout and preparation. Its always-run cleanup closes it as neutral if setup or the worker stops before closing it. The step summary is written even after setup errors.
-- Both the incremental review diff and the full merge-base PR diff are prepared. Resolution judges use the full scope; incremental review is used only when the previous aggregate proves all checks read the earlier diff and the reviewed commit is an ancestor of the current head. If the base branch moves, affected files are re-diffed from the current merge base. Uncertainty widens the diff rather than skipping unseen code.
-- Every child and aggregate conclusion is `success` or `neutral`. Findings are visible in comments/check summaries; only `fail-on-findings: true` makes the job fail. This does not make a GitHub check conclusion `failure`.
+- The action creates the aggregate check run before its repository checkout and preparation. Its always-run cleanup closes it as failure if setup or the worker stops before producing a complete review, so a required aggregate cannot pass without review. The step summary is written even after setup errors.
+- Both the incremental review diff and the full merge-base PR diff are prepared. Resolution judges use the full scope; incremental review is used only when the previous aggregate proves all checks read the earlier diff, the check set is unchanged, and the reviewed commit is an ancestor of the current head. If the base branch moves, affected files are re-diffed from the current merge base. Uncertainty widens the diff rather than skipping unseen code.
+- Child conclusions are `success` for PASS and `neutral` for findings or operational misses. The aggregate is `success` only when every check passes, `neutral` when checks completed but found issues, and `failure` when any check could not complete its review. Findings are visible in comments/check summaries; `fail-on-findings: true` also makes the job fail.
 - Diagnostics include prompts, changed code, tool results, and transcripts. They are not uploaded by default. Enable them only if the repository's privacy and retention policy allows it.
 - Tool permissions are read-only for the agent. The action and Claude Code CLI still process untrusted pull-request content; nothing in the job executes pull-request code or checks out the PR head before minting the App token.
 

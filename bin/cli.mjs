@@ -34,7 +34,7 @@ import {
 import { readIgnorePathspecs } from "../src/ignore.mjs";
 import { DEFAULT_LOCAL_PROVIDER, positiveInteger, runChecks } from "../src/local.mjs";
 import { parseBoolean, policyForRun, validateChecksDir } from "../src/options.mjs";
-import { DEDUP_SCHEMA, RESOLUTION_SCHEMA, RESULT_SCHEMA } from "../src/parse.mjs";
+import { DEDUP_SCHEMA, RESOLUTION_SCHEMA, RESULT_SCHEMA, checkSetDigest } from "../src/parse.mjs";
 import {
   fetchAuthEnv,
   preparePullRequest,
@@ -97,7 +97,6 @@ ${POLICY_HELP}
   --output <file>           Also write the JSON results here
   --artifacts-dir <dir>     Keep prompts, transcripts, and results here (default: a temp dir)
   --parallel <n>            Checks run at once (default: 4)
-  --max-budget <usd>        Per-check USD ceiling for the review (default: 2)
   --no-fail                 Exit 0 even when a check flags findings
 
 Providers:
@@ -121,18 +120,12 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
       output: { type: "string", default: "" },
       "artifacts-dir": { type: "string", default: "" },
       parallel: { type: "string", default: "4" },
-      "max-budget": { type: "string", default: "2" },
       "no-fail": { type: "boolean", default: false },
     },
     async run(values) {
       if (!["text", "markdown", "json"].includes(values.format)) {
         throw new UsageError(
           `--format must be text, markdown, or json, got ${JSON.stringify(values.format)}`,
-        );
-      }
-      if (!/^\d+(\.\d+)?$/.test(values["max-budget"]) || Number(values["max-budget"]) <= 0) {
-        throw new UsageError(
-          `--max-budget must be a positive USD amount, got ${JSON.stringify(values["max-budget"])}`,
         );
       }
       const repoDir = repoRoot(values["repo-dir"]);
@@ -204,7 +197,6 @@ usage errors. A neutral check (it could not reach a verdict) never fails the run
         schemaText: JSON.stringify(RESULT_SCHEMA),
         parallel,
         provider,
-        maxBudget: values["max-budget"],
         settingsDir: null,
       });
       mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -338,6 +330,22 @@ ${POLICY_HELP}
       mkdirSync(outDir, { recursive: true });
 
       console.error(verifyCheckout({ repoDir, headSha }));
+      const policy = policyForRun({
+        allowedIntelligence: env.WEAVE_CHECKS_ALLOWED_INTELLIGENCE,
+        docFiles: env.WEAVE_CHECKS_DOC_FILES,
+      });
+      const matrix = discoverChecksWithDefaults(checksDir, {
+        repoDir,
+        policy,
+        useDefaultChecks,
+        starterChecksDir: useDefaultChecks ? requiredEnv("WEAVE_CHECKS_STARTER_DIR") : undefined,
+      });
+      for (const entry of matrix)
+        console.error(
+          `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "anthropic")}`,
+        );
+      const checkDigest = checkSetDigest(matrix, repoDir);
+
       const { pathspecs, ignorePath } = readIgnorePathspecs(path.join(repoDir, checksDir));
       console.error(
         pathspecs.length === 0 ?
@@ -353,6 +361,7 @@ ${POLICY_HELP}
         baseSha: requiredEnv("BASE_SHA"),
         headSha,
         aggregateName: brandingFromEnv(env).aggregateName,
+        checkDigest,
         ignorePathspecs: pathspecs,
         diffBase: env.WEAVE_CHECKS_DIFF_BASE || undefined,
         fetchEnv: fetchAuthEnv(
@@ -360,21 +369,6 @@ ${POLICY_HELP}
           env.WEAVE_CHECKS_APP_TOKEN,
         ),
       });
-
-      const policy = policyForRun({
-        allowedIntelligence: env.WEAVE_CHECKS_ALLOWED_INTELLIGENCE,
-        docFiles: env.WEAVE_CHECKS_DOC_FILES,
-      });
-      const matrix = discoverChecksWithDefaults(checksDir, {
-        repoDir,
-        policy,
-        useDefaultChecks,
-        starterChecksDir: useDefaultChecks ? requiredEnv("WEAVE_CHECKS_STARTER_DIR") : undefined,
-      });
-      for (const entry of matrix)
-        console.error(
-          `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "anthropic")}`,
-        );
       writeFileSync(path.join(outDir, "matrix.json"), `${JSON.stringify({ check: matrix })}\n`);
 
       if (env.GITHUB_STEP_SUMMARY) {
@@ -413,7 +407,7 @@ ${POLICY_HELP}
       });
       console.error(
         closed ?
-          "Closed the incomplete aggregate check run as neutral."
+          "Closed the incomplete aggregate check run as failure."
         : "Aggregate already closed.",
       );
     },

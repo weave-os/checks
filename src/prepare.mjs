@@ -83,11 +83,9 @@ async function priorPRCommits({ rest, repository, prNumber, headSha }) {
 }
 
 // Guard 1: the newest PR commit whose aggregate check run carries the
-// worker's `reviewed:<sha>` external_id -- i.e. every check finished reading
-// its diff. A green run does NOT mean this: an operational miss publishes as
-// `neutral` and the job still exits 0, so its range would be skipped forever
-// if a conclusion were trusted. The marker embeds the sha, so a match also
-// proves the lookup landed on the right commit.
+// worker's `reviewed:<sha>:<check-digest>` external_id -- i.e. every check in
+// this exact check set finished reading its diff. The marker is checked
+// against both the sha and digest, so changed criteria fall back to the merge base.
 //
 // Walking older commits past an unmarked one is safe: a fully reviewed
 // ancestor is a valid base for everything after it, just a wider one.
@@ -98,6 +96,7 @@ export async function findLastReviewedSha({
   prNumber,
   headSha,
   aggregateName,
+  checkDigest,
   maxCandidates = MAX_REVIEWED_CANDIDATES,
   log = () => {},
 }) {
@@ -121,7 +120,7 @@ export async function findLastReviewedSha({
       );
       return null;
     }
-    if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha)) return sha;
+    if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha, checkDigest)) return sha;
   }
   return null;
 }
@@ -216,6 +215,7 @@ export async function preparePullRequest({
   baseSha,
   headSha,
   aggregateName,
+  checkDigest,
   ignorePathspecs = [],
   diffBase = DIFF_BASE.INCREMENTAL,
   fetchEnv = undefined,
@@ -239,6 +239,7 @@ export async function preparePullRequest({
       prNumber,
       headSha,
       aggregateName,
+      checkDigest,
       log,
     });
     const incremental = await checkIncrementalBase({
@@ -315,9 +316,37 @@ export async function preparePullRequest({
   }
 
   const diff = (from, pathspecs) =>
-    git(["diff", "-U0", from, headSha, "--", ...pathspecs], { cwd: repoDir });
+    git(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "-U0",
+        from,
+        headSha,
+        "--",
+        ...pathspecs,
+      ],
+      { cwd: repoDir },
+    );
   const stat = (from, pathspecs) =>
-    git(["diff", "--stat", from, headSha, "--", ...pathspecs], { cwd: repoDir });
+    git(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--stat",
+        from,
+        headSha,
+        "--",
+        ...pathspecs,
+      ],
+      { cwd: repoDir },
+    );
   const fullTreePathspecs = [".", ...ignorePathspecs];
 
   const fullDiff = diff(mergeBaseSha, fullTreePathspecs);

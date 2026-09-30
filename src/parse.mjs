@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 // Check-file parsing, diff parsing, and the fixed vocabularies Weave Checks
 // shares between the GitHub action, the worker, and the local CLI.
 //
@@ -367,6 +371,59 @@ export const DEDUP_SCHEMA = {
   required: ["duplicate_indices"],
 };
 
+// Decodes one Git-quoted path from a unified-diff header. Git quotes control
+// characters and, with core.quotePath enabled, non-ASCII UTF-8 bytes using
+// C-style escapes and three-digit octal sequences.
+function unquoteGitPath(value) {
+  if (!value.startsWith('"')) {
+    const tab = value.indexOf("\t");
+    return tab === -1 ? value : value.slice(0, tab);
+  }
+
+  const bytes = [];
+  for (let index = 1; index < value.length;) {
+    const char = value[index];
+    if (char === '"') {
+      const suffix = value.slice(index + 1);
+      if (suffix !== "" && !suffix.startsWith("\t")) return null;
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes));
+      } catch {
+        return null;
+      }
+    }
+    if (char === "\\") {
+      const escaped = value[index + 1];
+      const simple = {
+        a: 7,
+        b: 8,
+        t: 9,
+        n: 10,
+        v: 11,
+        f: 12,
+        r: 13,
+        '"': 34,
+        "\\": 92,
+      };
+      if (Object.hasOwn(simple, escaped)) {
+        bytes.push(simple[escaped]);
+        index += 2;
+        continue;
+      }
+      const octal = /^[0-7]{1,3}/.exec(value.slice(index + 1));
+      if (octal === null) return null;
+      bytes.push(Number.parseInt(octal[0], 8));
+      index += octal[0].length + 1;
+      continue;
+    }
+    const codePoint = value.codePointAt(index);
+    const literal = String.fromCodePoint(codePoint);
+    bytes.push(...Buffer.from(literal, "utf8"));
+    index += literal.length;
+  }
+  return null;
+}
+
 // Parses `git diff -U0` output into the set of line numbers actually added or
 // modified per file. Review comments may only anchor to these lines: GitHub
 // rejects a comment outside the diff hunks with a 422, which would turn an
@@ -376,15 +433,16 @@ export function parseAddedLines(diffText) {
   let current = null;
 
   for (const line of diffText.split("\n")) {
-    if (line.startsWith("+++ b/")) {
-      current = line.slice("+++ b/".length).trim();
+    if (line.startsWith("+++ ")) {
+      current = null;
+      const headerPath = unquoteGitPath(line.slice("+++ ".length));
+      if (headerPath === null || headerPath === "/dev/null" || !headerPath.startsWith("b/")) {
+        continue;
+      }
+      current = headerPath.slice("b/".length);
       if (!byFile.has(current)) {
         byFile.set(current, new Set());
       }
-      continue;
-    }
-    if (line.startsWith("+++ /dev/null")) {
-      current = null;
       continue;
     }
     if (!line.startsWith("@@") || current === null) {
@@ -548,23 +606,31 @@ export function publicOutcome(outcome) {
   return PUBLIC_OUTCOME[outcome] ?? PUBLIC_OUTCOME[OUTCOME.NEUTRAL];
 }
 
-// "Every check on this sha finished a review." Written by the worker onto the
-// aggregate check run's external_id, read back by the workflow before it
-// narrows the next run's diff to `<that sha>..HEAD`.
-//
-// It cannot be inferred from the check run's conclusion. The PASS-or-neutral
-// contract (see worker.mjs's header) publishes a FAIL verdict and a crashed
-// CLI as the same `neutral`, so the conclusion cannot tell "reviewed and found
-// something" from "never ran" -- and narrowing the diff past a range a check
-// never read would skip it permanently. OUTCOME does carry the distinction:
-// PASS and FAIL are both completed reviews, NEUTRAL is the operational miss.
-//
-// The sha rides inside the marker so the reader verifies identity rather than
-// trusting that it looked the value up on the right commit.
+// A check-set digest prevents an old aggregate from narrowing a newly added
+// or changed check past PR lines it never reviewed. The criteria file is read
+// the same way the runner locates it, and sorting makes matrix order irrelevant.
+export function checkSetDigest(checks, repoDir = ".") {
+  const entries = checks
+    .map(check => ({
+      slug: check.slug,
+      intelligence: check.intelligence,
+      model: check.model,
+      criteria: readFileSync(check.criteriaPath ?? path.join(repoDir, check.path), "utf8"),
+    }))
+    .sort((a, b) =>
+      a.slug < b.slug ? -1
+      : a.slug > b.slug ? 1
+      : 0,
+    );
+  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+}
+
+// "Every check on this sha with this exact check set finished a review." The
+// digest changes when a check is added, removed, or its criteria/model changes.
 const REVIEWED_MARKER_PREFIX = "reviewed:";
 
-export function formatReviewedMarker(sha) {
-  return `${REVIEWED_MARKER_PREFIX}${sha}`;
+export function formatReviewedMarker(sha, digest) {
+  return `${REVIEWED_MARKER_PREFIX}${sha}:${digest}`;
 }
 
 // True when every check state completed a review, whatever it concluded.
@@ -597,18 +663,14 @@ export const INTERPRET_OUTCOME = Object.freeze({
 export const GITHUB_CONCLUSION = Object.freeze({
   SUCCESS: "success",
   NEUTRAL: "neutral",
+  FAILURE: "failure",
 });
 
 // HTTP verbs the worker's GitHub REST wrapper actually sends. Kept next to
 // GITHUB_CONCLUSION so callers (worker.mjs's github()) restate nothing as
 // raw strings -- a typo "GETT" would silently 404 instead of failing loudly.
-//
-// GITHUB_CONCLUSION deliberate singles: the check-run contract is now
-// `success` or `neutral` only. A FAIL verdict, an operational miss, or
-// a coordinator crash all publish as `neutral`. The const set is
-// deliberately a frozen pair so adding `FAILURE` here won't sneak the
-// red conclusion back in -- the worker reads `SUCCESS`/`NEUTRAL` and
-// maps every `!= SUCCESS` outcome to `NEUTRAL`.
+// Operational misses and coordinator failures publish `failure`, while a
+// completed review with findings remains `neutral`.
 export const HTTP_METHOD = Object.freeze({
   GET: "GET",
   POST: "POST",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +20,7 @@ import {
   SUPPORTED_INTELLIGENCE,
   VERDICT,
   buildMatrix,
+  checkSetDigest,
   everyCheckReviewed,
   formatReviewedMarker,
   formatReviewComment,
@@ -364,6 +366,40 @@ describe("parseAddedLines", () => {
   it("ignores deleted files", () => {
     const diff = ["--- a/gone.ts", "+++ /dev/null", "@@ -1,2 +0,0 @@", "-x"].join("\n");
     assert.equal(parseAddedLines(diff).size, 0);
+  });
+
+  it("decodes quoted Git paths and clears the prior file on an unknown header", () => {
+    const diff = [
+      "+++ b/first.go",
+      "@@ -0,0 +1 @@",
+      "+first",
+      String.raw`+++ "b/tab\tname.go"`,
+      "@@ -0,0 +2 @@",
+      "+tab",
+      String.raw`+++ "b/caf\303\251.md"`,
+      "@@ -0,0 +3 @@",
+      "+utf8",
+      String.raw`+++ "b/quote\"slash\\file.go"`,
+      "@@ -0,0 +4 @@",
+      "+escaped",
+      '+++ "b/space name.go"\t2026-01-01',
+      "@@ -0,0 +5 @@",
+      "+space",
+      String.raw`+++ "b/broken\q.go"`,
+      "@@ -0,0 +6 @@",
+      "+must not attach to previous file",
+    ].join("\n");
+
+    const lines = parseAddedLines(diff);
+    assert.deepEqual(
+      [...lines.keys()],
+      ["first.go", "tab\tname.go", "café.md", 'quote"slash\\file.go', "space name.go"],
+    );
+    assert.deepEqual([...lines.get("first.go")], [1]);
+    assert.deepEqual([...lines.get("tab\tname.go")], [2]);
+    assert.deepEqual([...lines.get("café.md")], [3]);
+    assert.deepEqual([...lines.get('quote"slash\\file.go')], [4]);
+    assert.deepEqual([...lines.get("space name.go")], [5]);
   });
 });
 
@@ -762,14 +798,39 @@ describe("fixture checks directory", () => {
 });
 
 const SHA = "7d723791c13464f0e66dc2dafe107aef40a22c06";
+const CHECK_DIGEST = "b".repeat(64);
+
+describe("checkSetDigest", () => {
+  it("is order-independent and changes with criteria or model selection", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "weave-check-set-"));
+    try {
+      fs.writeFileSync(path.join(dir, "a.md"), "criteria a\n");
+      fs.writeFileSync(path.join(dir, "b.md"), "criteria b\n");
+      const checks = [
+        { slug: "a", intelligence: "low", model: "haiku", path: "a.md" },
+        { slug: "b", intelligence: "medium", model: "sonnet", path: "b.md" },
+      ];
+      const digest = checkSetDigest(checks, dir);
+      assert.equal(checkSetDigest([...checks].reverse(), dir), digest);
+
+      fs.writeFileSync(path.join(dir, "a.md"), "updated criteria a\n");
+      assert.notEqual(checkSetDigest(checks, dir), digest);
+      assert.notEqual(
+        checkSetDigest(
+          checks.map(check => ({ ...check, model: "opus" })),
+          dir,
+        ),
+        digest,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("formatReviewedMarker", () => {
-  // Both sides of the marker contract read this function: the worker writes
-  // its result to the aggregate's external_id, and the workflow formats the
-  // expected value from it via `node -e` rather than hardcoding the prefix in
-  // bash. A silent change here stops the review base narrowing, so pin it.
-  it("embeds the sha behind a stable prefix", () => {
-    assert.equal(formatReviewedMarker(SHA), `reviewed:${SHA}`);
+  it("embeds the sha and check-set digest behind a stable prefix", () => {
+    assert.equal(formatReviewedMarker(SHA, CHECK_DIGEST), `reviewed:${SHA}:${CHECK_DIGEST}`);
   });
 });
 

@@ -5,13 +5,15 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { git as realGit } from "./git.mjs";
-import { formatReviewedMarker } from "./parse.mjs";
+import { formatReviewedMarker, parseAddedLines } from "./parse.mjs";
 import { DIFF_BASE, fetchAuthEnv, preparePullRequest, verifyCheckout } from "./prepare.mjs";
 
 const ROOTS = [];
 after(() => {
   for (const root of ROOTS) rmSync(root, { recursive: true, force: true });
 });
+
+const CHECK_DIGEST = "a".repeat(64);
 
 const GIT_ENV = {
   GIT_AUTHOR_NAME: "Test",
@@ -112,6 +114,7 @@ function prepare(space, rest, overrides = {}) {
     repository: "o/r",
     prNumber: "7",
     aggregateName: "Weave Checks",
+    checkDigest: CHECK_DIGEST,
     sleep: async () => {},
     log: line => logs.push(line),
     ...overrides,
@@ -152,6 +155,19 @@ describe("preparePullRequest", () => {
     assert.ok(space.read("pr.full.diff").endsWith("+trailing   \n"));
   });
 
+  it("parses paths Git quotes in the prepared diff", async () => {
+    const space = repos();
+    const base = space.commit({ "README.md": "hello\n" });
+    space.branch("feature");
+    const fileNames = ["café.md", "tab\tname.md", "line\nbreak.md", 'quote"slash\\file.md'];
+    const head = space.commit(Object.fromEntries(fileNames.map(name => [name, `${name}\n`])));
+
+    await prepare(space, fakeRest(space, { prCommits: [head] }), { baseSha: base, headSha: head });
+
+    const addedLines = parseAddedLines(space.read("pr.diff"));
+    assert.deepEqual([...addedLines.keys()].sort(), fileNames.sort());
+  });
+
   it("narrows to the last fully reviewed commit, keeping the full scope for resolution", async () => {
     const space = repos();
     const base = space.commit({ "README.md": "hello\n" });
@@ -163,7 +179,7 @@ describe("preparePullRequest", () => {
       space,
       fakeRest(space, {
         prCommits: [reviewed, head],
-        markers: { [reviewed]: formatReviewedMarker(reviewed) },
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
       }),
       { baseSha: base, headSha: head },
     );
@@ -187,7 +203,7 @@ describe("preparePullRequest", () => {
       fakeRest(space, {
         prCommits: [reviewed, partial, head],
         // The newer run had an operational miss: no marker, or someone else's.
-        markers: { [partial]: "", [reviewed]: formatReviewedMarker(reviewed) },
+        markers: { [partial]: "", [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
       }),
       { baseSha: base, headSha: head },
     );
@@ -207,12 +223,32 @@ describe("preparePullRequest", () => {
       space,
       fakeRest(space, {
         prCommits: [reviewed, head],
-        markers: { [reviewed]: formatReviewedMarker(head) },
+        markers: { [reviewed]: formatReviewedMarker(head, CHECK_DIGEST) },
       }),
       { baseSha: base, headSha: head },
     );
 
     assert.equal(result.reviewBaseSha, base);
+  });
+
+  it("rejects a marker from a different check set", async () => {
+    const space = repos();
+    const base = space.commit({ "README.md": "hello\n" });
+    space.branch("feature");
+    const reviewed = space.commit({ "a.js": "a\n" });
+    const head = space.commit({ "b.js": "b\n" });
+
+    const result = await prepare(
+      space,
+      fakeRest(space, {
+        prCommits: [reviewed, head],
+        markers: { [reviewed]: formatReviewedMarker(reviewed, "b".repeat(64)) },
+      }),
+      { baseSha: base, headSha: head },
+    );
+
+    assert.equal(result.reviewBaseSha, base);
+    assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
   });
 
   it("falls back to the merge base when the reviewed commit is no longer an ancestor", async () => {
@@ -228,7 +264,7 @@ describe("preparePullRequest", () => {
       space,
       fakeRest(space, {
         prCommits: [orphaned, head],
-        markers: { [orphaned]: formatReviewedMarker(orphaned) },
+        markers: { [orphaned]: formatReviewedMarker(orphaned, CHECK_DIGEST) },
       }),
       { baseSha: base, headSha: head },
     );
@@ -258,7 +294,7 @@ describe("preparePullRequest", () => {
       space,
       fakeRest(space, {
         prCommits: [reviewed, head],
-        markers: { [reviewed]: formatReviewedMarker(reviewed) },
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
       }),
       { baseSha: newBase, headSha: head },
     );
@@ -306,7 +342,7 @@ describe("preparePullRequest", () => {
       space,
       fakeRest(space, {
         prCommits: [reviewed, head],
-        markers: { [reviewed]: formatReviewedMarker(reviewed) },
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
       }),
       { baseSha: base, headSha: head, ignorePathspecs: [":(exclude)vendor"] },
     );
@@ -324,7 +360,7 @@ describe("preparePullRequest", () => {
     const head = space.commit({ "b.js": "b\n" });
     const rest = fakeRest(space, {
       prCommits: [reviewed, head],
-      markers: { [reviewed]: formatReviewedMarker(reviewed) },
+      markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
     });
 
     const result = await prepare(space, rest, {

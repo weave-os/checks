@@ -130,14 +130,38 @@ export function writeWorkingTreeDiff({
     git(["add", "-A", "--", ".", ...snapshotExcludes], { cwd: repoDir, env });
     // -U0 matches CI: the agent reviews changed lines only, so context lines
     // would just invite comments that diff validation then drops.
-    const diff = git(["diff", "-U0", "--cached", base, "--", ".", ...ignorePathspecs], {
-      cwd: repoDir,
-      env,
-    });
-    const stat = git(["diff", "--cached", "--stat", base, "--", ".", ...ignorePathspecs], {
-      cwd: repoDir,
-      env,
-    });
+    const diff = git(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "-U0",
+        "--cached",
+        base,
+        "--",
+        ".",
+        ...ignorePathspecs,
+      ],
+      { cwd: repoDir, env },
+    );
+    const stat = git(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--cached",
+        "--stat",
+        base,
+        "--",
+        ".",
+        ...ignorePathspecs,
+      ],
+      { cwd: repoDir, env },
+    );
     return writeDiffFiles(outDir, diff, stat);
   } finally {
     rmSync(scratchDir, { recursive: true, force: true });
@@ -154,8 +178,38 @@ export function writeRangeDiff({
   ignorePathspecs = [],
   git = defaultGit,
 }) {
-  const diff = git(["diff", "-U0", base, head, "--", ".", ...ignorePathspecs], { cwd: repoDir });
-  const stat = git(["diff", "--stat", base, head, "--", ".", ...ignorePathspecs], { cwd: repoDir });
+  const diff = git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "-U0",
+      base,
+      head,
+      "--",
+      ".",
+      ...ignorePathspecs,
+    ],
+    { cwd: repoDir },
+  );
+  const stat = git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--stat",
+      base,
+      head,
+      "--",
+      ".",
+      ...ignorePathspecs,
+    ],
+    { cwd: repoDir },
+  );
   return writeDiffFiles(outDir, diff, stat);
 }
 

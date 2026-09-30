@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { OUTCOME, RESULT_SCHEMA } from "./parse.mjs";
+import { OUTCOME, RESULT_SCHEMA, checkSetDigest, formatReviewedMarker } from "./parse.mjs";
 import { appendMarker } from "./history.mjs";
 import { readWorkerConfig, runWorker } from "./worker.mjs";
 
@@ -86,6 +86,10 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
   };
 }
 
+function reviewedMarker(env) {
+  return formatReviewedMarker(HEAD_SHA, checkSetDigest(CHECKS, env.REPO_DIR));
+}
+
 function reply(status, body) {
   return {
     ok: status >= 200 && status < 300,
@@ -101,6 +105,7 @@ function reply(status, body) {
 function fakeGitHub({
   threads = [],
   failMaster = false,
+  failThreads = false,
   failResolve = false,
   liveHead = HEAD_SHA,
 } = {}) {
@@ -113,6 +118,7 @@ function fakeGitHub({
     calls.push({ method, route, body });
     if (route === "graphql") {
       if (body.query.includes("reviewThreads")) {
+        if (failThreads) return reply(500, { message: "history unavailable" });
         return reply(200, {
           data: {
             repository: {
@@ -245,7 +251,7 @@ describe("runWorker", () => {
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.status, "completed");
     assert.equal(final.conclusion, "success");
-    assert.equal(final.external_id, `reviewed:${HEAD_SHA}`);
+    assert.equal(final.external_id, reviewedMarker(env));
     assert.match(final.output.title, /^Weave Checks: 2 pass · 0 flagged · 0 neutral/);
     assert.match(final.output.summary, /client-reported cost/);
     assert.equal(readFileSync(env.COMPLETE_PATH, "utf8"), "completed\n");
@@ -280,7 +286,7 @@ describe("runWorker", () => {
     assert.deepEqual(conclusions, ["neutral", "success"]);
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "neutral");
-    assert.equal(final.external_id, `reviewed:${HEAD_SHA}`);
+    assert.equal(final.external_id, reviewedMarker(env));
     assert.match(final.output.title, /^Acme Reviews: 1 pass · 1 flagged/);
     const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
     assert.deepEqual(results.totals, {
@@ -315,8 +321,25 @@ describe("runWorker", () => {
     );
 
     const final = github.masterPatches().at(-1).body;
-    assert.equal(final.conclusion, "neutral");
+    assert.equal(final.conclusion, "failure");
     assert.equal(final.external_id, undefined);
+  });
+
+  it("fails the aggregate without running checks when review history is unavailable", async () => {
+    const { env } = workerEnv();
+    const github = fakeGitHub({ failThreads: true });
+
+    const outcome = await run(env, github, async () => {
+      throw new Error("checks must not run without history");
+    });
+
+    assert.equal(outcome.ok, false);
+    assert.equal(github.childRuns().length, 0);
+    assert.equal(github.reviews().length, 0);
+    const final = github.masterPatches().at(-1).body;
+    assert.equal(final.conclusion, "failure");
+    assert.equal(final.external_id, undefined);
+    assert.equal(readFileSync(env.COMPLETE_PATH, "utf8"), "crashed\n");
   });
 
   it("posts findings inline as COMMENT reviews", async () => {
@@ -555,7 +578,7 @@ describe("runWorker", () => {
     assert.equal(github.childRuns().length, 0);
     const [final] = github.masterPatches();
     assert.equal(final.body.conclusion, "success");
-    assert.equal(final.body.external_id, `reviewed:${HEAD_SHA}`);
+    assert.equal(final.body.external_id, reviewedMarker(env));
     assert.match(final.body.output.summary, /excluded by `checks\/\.ignore`/);
     assert.equal(readFileSync(env.COMPLETE_PATH, "utf8"), "no-reviewable-changes\n");
   });

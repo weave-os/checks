@@ -1,16 +1,10 @@
 // Runs all Weave Checks from one GitHub Actions job.
 //
-// Check-run conclusions follow a strict PASS-or-neutral contract. A check
-// run is `success` ONLY when the agent verdict is PASS; FAIL verdicts,
-// operational misses (CLI crash, JSON parse failure, structured-output
-// skipped), and every other non-PASS outcome publish as GitHub `neutral`.
-// The reasoning: the underlying issues are surfaced as inline review
-// comments already, so a red status row doesn't add new signal, it only paints the check red
-// on the PR status row. Worse, there is no workflow event for "conversation
-// resolved" to flip a check back to green when a human dismisses a
-// finding, so a FAIL-on-findings check can stay red even after the
-// underlying issue has been resolved by hand. Neutral is the correct
-// conclusion in that case.
+// Per-check runs are `success` only for a PASS verdict; findings and
+// individual operational misses are `neutral`. The aggregate is `failure` if
+// any check could not complete its review, including coordinator failures. A
+// completed review with findings remains neutral so dismissed findings never
+// leave a permanently-red status row.
 //
 // The action creates one aggregate Check Run before starting this script.
 // This worker creates the per-check runs, runs the agents in a bounded local
@@ -55,6 +49,7 @@ import {
   CHECK_RUN_STATUS,
   HTTP_METHOD,
   REVIEW_EVENT,
+  checkSetDigest,
   everyCheckReviewed,
   formatReviewComment,
   formatReviewedMarker,
@@ -224,6 +219,7 @@ export async function runWorker(config, deps = {}) {
   } = config;
   const MARKERS = markerCodec(BRANDING.markerPrefix);
   const IGNORE_FILE = `${config.checksDir}/.ignore`;
+  const CHECK_DIGEST = checkSetDigest(CHECKS, REPO_DIR);
   // Bounds the review agent's suggestions: it only saw DIFF, so it may only
   // comment on DIFF's lines.
   const ADDED_LINES = parseAddedLines(DIFF);
@@ -862,12 +858,9 @@ export async function runWorker(config, deps = {}) {
   async function completeCheckRun(state) {
     const { check, checkRunId, result } = state;
     const costErrors = COST_ERRORS.get(check.slug);
-    // every non-PASS outcome -- FAIL verdict, operational error (CLI crash,
-    // structured-output miss, dedup-eliminated finding, etc.) -- publishes as
-    // neutral, never failure. See the top-of-file rationale: the underlying
-    // issues are still surfaced as review comments and there is no workflow
-    // event for "conversation resolved" to flip a red check green when a
-    // human dismisses the finding, so red is the wrong signal here.
+    // Every non-PASS child outcome stays neutral: findings are already on the
+    // review, and operational misses are represented as failure by the
+    // aggregate so incomplete reviews cannot satisfy branch protection.
     const conclusion =
       result.outcome === OUTCOME.PASS ? GITHUB_CONCLUSION.SUCCESS : GITHUB_CONCLUSION.NEUTRAL;
     // Cost is the most-watched number on the status-checks list (people open it
@@ -1027,28 +1020,19 @@ export async function runWorker(config, deps = {}) {
     };
     if (final) {
       payload.status = CHECK_RUN_STATUS.COMPLETED;
-      // A child FAIL verdict no longer paints the aggregate red either:
-      // child-check findings are advisory and already surfaced on their own
-      // check runs, and there is no "conversation resolved" event to flip a
-      // red aggregate green. The aggregate goes `success` only when every
-      // child PASSed; any non-PASS outcome (FAIL, operational error, the
-      // child itself never ran because the coordinator crashed before
-      // reaching it) collapses to neutral. A `failure` conclusion is only
-      // reachable via a top-level coordinator error -- which still applies;
-      // this branch is downstream of that and has already filtered it out.
+      // A completed FAIL verdict stays neutral: the finding is already visible
+      // on the child's own run and should not leave a red status after a human
+      // resolves it. A check that could not complete is different -- branch
+      // protection must not pass when part of the PR went unread.
       payload.conclusion =
-        pass === all.length && all.length > 0 ?
-          GITHUB_CONCLUSION.SUCCESS
+        pass === all.length && all.length > 0 ? GITHUB_CONCLUSION.SUCCESS
+        : !everyCheckReviewed(all) ? GITHUB_CONCLUSION.FAILURE
         : GITHUB_CONCLUSION.NEUTRAL;
-      // The next run reads this back to decide whether it may narrow its diff
-      // to `HEAD_SHA..<new head>`. It is deliberately NOT the conclusion above:
-      // that collapses a FAIL verdict and a crashed CLI into the same
-      // `neutral`, and a fix iteration -- the case this whole feature exists
-      // for -- normally has findings. everyCheckReviewed() asks the question
-      // the conclusion cannot: did every check finish reading the diff?
-      // Absent marker means "assume not", which costs a wider diff next run.
+      // This marker records which check set completed, not merely the head
+      // commit. Findings count as completed reviews; any operational miss
+      // withholds it so the next run widens back to the merge base.
       if (everyCheckReviewed(all)) {
-        payload.external_id = formatReviewedMarker(HEAD_SHA);
+        payload.external_id = formatReviewedMarker(HEAD_SHA, CHECK_DIGEST);
       }
     }
     await github(HTTP_METHOD.PATCH, checkRunPath(MASTER_CHECK_RUN_ID), payload);
@@ -1355,7 +1339,7 @@ export async function runWorker(config, deps = {}) {
         // unread, because there was nothing to read. Withholding the marker
         // would let an ignored-paths-only push pin the review base until some
         // later run happened to re-establish it.
-        external_id: formatReviewedMarker(HEAD_SHA),
+        external_id: formatReviewedMarker(HEAD_SHA, CHECK_DIGEST),
         output: {
           title: `${BRANDING.aggregateName}: no reviewable changes`,
           summary:
@@ -1371,17 +1355,7 @@ export async function runWorker(config, deps = {}) {
     states = buildStates();
     await updateMasterBestEffort();
 
-    // Best-effort: a history-fetch failure (rate limit, transient API error)
-    // shouldn't block the run -- checks still run and post, just without
-    // cross-run memory for this one pass.
-    let rawThreadNodes = [];
-    try {
-      rawThreadNodes = await fetchAllReviewThreads();
-    } catch (error) {
-      console.error(
-        `${BRANDING.aggregateName}: failed to fetch review thread history: ${error.stack ?? error}`,
-      );
-    }
+    const rawThreadNodes = await fetchAllReviewThreads();
 
     await runQueuedChecks(rawThreadNodes);
     await updateMaster(true);
@@ -1390,17 +1364,14 @@ export async function runWorker(config, deps = {}) {
     return { ok: true, marker: RUN_MARKER.COMPLETED, states: [...states.values()] };
   } catch (error) {
     console.error(`${BRANDING.aggregateName} worker fatal: ${error.stack ?? error}`);
-    // A top-level coordinator error means the aggregate cannot represent the
-    // child checks reliably. Even so, this also publishes as `neutral` in
-    // step with the rest of the file -- a non-PASS outcome never goes red.
-    // A child FAIL verdict can't paint the aggregate red, and a coordinator
-    // crash shouldn't either: the workflow run's own failure badge and the
-    // step summary already say something went wrong.
+    // A coordinator error means the aggregate cannot represent a completed
+    // review. Publish failure so branch protection cannot accept an incomplete
+    // run as a pass; individual findings remain neutral child runs.
     let finalisedAggregate = false;
     try {
       await github(HTTP_METHOD.PATCH, checkRunPath(MASTER_CHECK_RUN_ID), {
         status: CHECK_RUN_STATUS.COMPLETED,
-        conclusion: GITHUB_CONCLUSION.NEUTRAL,
+        conclusion: GITHUB_CONCLUSION.FAILURE,
         output: {
           title: `${BRANDING.aggregateName}: coordinator error`,
           summary: fallbackSummary(error),

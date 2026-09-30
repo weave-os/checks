@@ -87,7 +87,7 @@ describe("closeAggregate", () => {
     assert.equal(rest.calls.length, 0);
   });
 
-  it("closes an aggregate the worker never reached as neutral, never failure", async () => {
+  it("closes an aggregate the worker never reached as failure", async () => {
     const rest = recordingRest();
 
     const closed = await closeAggregate({
@@ -102,7 +102,7 @@ describe("closeAggregate", () => {
     assert.equal(rest.calls[0].method, "PATCH");
     assert.equal(rest.calls[0].apiPath, "repos/o/r/check-runs/5");
     assert.equal(rest.calls[0].body.status, "completed");
-    assert.equal(rest.calls[0].body.conclusion, "neutral");
+    assert.equal(rest.calls[0].body.conclusion, "failure");
     assert.equal(rest.calls[0].body.output.title, "Acme Checks: coordinator error");
   });
 

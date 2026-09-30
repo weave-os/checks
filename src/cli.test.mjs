@@ -161,6 +161,14 @@ describe("weave-checks run", () => {
     assert.match(result.stderr, /nothing to check/);
   });
 
+  it("rejects the removed max-budget option", () => {
+    const space = workspace();
+    const result = space.cli(["run", "--max-budget", "1"]);
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /max-budget/);
+  });
+
   it("needs no Weave secret for anthropic and never hands one to the agent", () => {
     const space = workspace();
 

@@ -13,6 +13,7 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 
 import { git as realGit } from "./git.mjs";
+import { parseAddedLines } from "./parse.mjs";
 import {
   DEFAULT_BASE,
   FALLBACK_BASE,
@@ -136,7 +137,7 @@ describe("writeWorkingTreeDiff", () => {
           outDir: r.out,
           git: tracingGit(scratch),
         }),
-      /git diff/,
+      /git .*diff/,
     );
     assert.equal(scratch.size, 1);
     for (const index of scratch) assert.equal(existsSync(path.dirname(index)), false);
@@ -256,6 +257,19 @@ describe("writeWorkingTreeDiff", () => {
 
     assert.match(diff, /\$\(touch pwned\) ;\.txt/);
     assert.equal(existsSync(path.join(r.dir, "pwned")), false);
+  });
+
+  it("parses quoted and non-ASCII paths from the working-tree diff", () => {
+    const r = repo();
+    r.write("base.txt", "base\n");
+    r.git("add", ".");
+    const base = r.commit();
+    const fileNames = ["café.md", "tab\tname.md", "line\nbreak.md", 'quote"slash\\file.md'];
+    for (const name of fileNames) r.write(name, `${name}\n`);
+
+    const { diff } = writeWorkingTreeDiff({ repoDir: r.dir, base, outDir: r.out });
+
+    assert.deepEqual([...parseAddedLines(diff).keys()].sort(), fileNames.sort());
   });
 });
 

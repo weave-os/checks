@@ -3,8 +3,8 @@
 //
 // Each is a small function over an injected REST client so the contract the
 // action relies on -- creation before checkout, a cleanup that never
-// overwrites the worker's own close, neutral-only conclusions, findings
-// failing the job only by explicit request -- is unit tested (ci.test.mjs).
+// overwrites the worker's own close, and failure on incomplete reviews -- is
+// unit tested (ci.test.mjs).
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
@@ -35,7 +35,8 @@ export async function createAggregate({ rest, repository, headSha, aggregateName
 // wrote `completePath` and this is a no-op, so the worker's specific message
 // is never overwritten with this generic one. Otherwise -- a crash in
 // checkout, preparation, discovery, or before the worker could PATCH --
-// close it neutral here. Neutral, never failure: see worker.mjs's header.
+// close it as failure so branch protection cannot accept a run that never
+// produced a review. Findings remain neutral; only incomplete reviews fail.
 export async function closeAggregate({
   rest,
   repository,
@@ -46,7 +47,7 @@ export async function closeAggregate({
   if (!checkRunId || existsSync(completePath)) return false;
   await rest("PATCH", `repos/${repository}/check-runs/${checkRunId}`, {
     status: CHECK_RUN_STATUS.COMPLETED,
-    conclusion: GITHUB_CONCLUSION.NEUTRAL,
+    conclusion: GITHUB_CONCLUSION.FAILURE,
     output: {
       title: `${aggregateName}: coordinator error`,
       summary:
