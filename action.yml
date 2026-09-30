@@ -1,10 +1,10 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-action.json
 name: Weave Checks
-description: Advisory, per-concern AI review of pull requests, driven by Markdown check files in your repository.
+description: QA for your software factory
 author: Weave
 branding:
   icon: check-square
-  color: purple
+  color: orange
 
 # Every GitHub call is made as the Weave Checks GitHub App, never as
 # github-actions[bot]. The action exchanges the job's GitHub OIDC token with
@@ -15,8 +15,8 @@ branding:
 # reusable workflow .github/workflows/weave-checks.yml; call that, not this.
 inputs:
   provider:
-    description: "Who serves the agents' requests: anthropic (direct Anthropic or any Anthropic-compatible endpoint) or weave-router."
-    default: anthropic
+    description: "Who serves the agents' requests: weave-router, or anthropic (direct Anthropic or any Anthropic-compatible endpoint)."
+    default: weave-router
   anthropic-api-key:
     description: Anthropic API key (provider anthropic). Not needed with claude-code-oauth-token or a provider-env gateway that authenticates itself.
     default: ""

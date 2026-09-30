@@ -83,7 +83,7 @@ export function discoverChecksWithDefaults(
 }
 
 // One human-readable line per check, shared by the script below and the CLI.
-export function describeEntry(entry, provider = "anthropic") {
+export function describeEntry(entry, provider = "weave-router") {
   const model = provider === "anthropic" ? ` → ${entry.model}` : "";
   return `${entry.slug}: "${entry.name}" (intelligence ${entry.intelligence}${model})`;
 }
@@ -97,7 +97,7 @@ function main() {
     console.error(`check discovery failed: ${err.message}`);
     process.exit(1);
   }
-  const provider = process.env.WEAVE_CHECKS_PROVIDER || "anthropic";
+  const provider = process.env.WEAVE_CHECKS_PROVIDER || "weave-router";
   for (const entry of matrix) {
     console.error(`discovered ${describeEntry(entry, provider)}`);
   }

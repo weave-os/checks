@@ -74,6 +74,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
       GITHUB_REPOSITORY: REPO,
       GITHUB_API_URL: "https://api.test",
       GITHUB_RUN_ID: "42",
+      WEAVE_ROUTER_KEY: "rk",
       MATRIX_PATH: write("matrix.json", JSON.stringify({ check: CHECKS })),
       DIFF_PATH: write("pr.diff", diff),
       STAT_PATH: write("pr.stat", " app/main.go | 2 ++"),
@@ -193,9 +194,10 @@ async function run(env, github, evaluate, extraDeps = {}) {
 }
 
 describe("readWorkerConfig", () => {
-  it("defaults to the anthropic provider and needs no Weave secret", () => {
-    const config = readWorkerConfig(workerEnv().env);
-    assert.equal(config.provider.id, "anthropic");
+  it("defaults to the weave-router provider and requires its key", () => {
+    const { env } = workerEnv({ WEAVE_ROUTER_KEY: "rk" });
+    const config = readWorkerConfig(env);
+    assert.equal(config.provider.id, "weave-router");
     assert.equal(config.schemaText, JSON.stringify(RESULT_SCHEMA));
     for (const option of [
       "reviewEvent",
@@ -208,12 +210,17 @@ describe("readWorkerConfig", () => {
     ]) {
       assert.equal(Object.hasOwn(config, option), false, option);
     }
+    const { env: noRouter } = workerEnv({ WEAVE_ROUTER_KEY: "" });
+    assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
   });
 
   it("fails at startup when weave-router is missing its key", () => {
     const { env } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" });
     assert.equal(readWorkerConfig(env).provider.id, "weave-router");
-    const { env: noRouter } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router" });
+    const { env: noRouter } = workerEnv({
+      WEAVE_CHECKS_PROVIDER: "weave-router",
+      WEAVE_ROUTER_KEY: "",
+    });
     assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
   });
 
@@ -253,7 +260,7 @@ describe("runWorker", () => {
     assert.equal(final.conclusion, "success");
     assert.equal(final.external_id, reviewedMarker(env));
     assert.match(final.output.title, /^Weave Checks: 2 pass · 0 flagged · 0 neutral/);
-    assert.match(final.output.summary, /client-reported cost/);
+    assert.match(final.output.summary, /router cost/);
     assert.equal(readFileSync(env.COMPLETE_PATH, "utf8"), "completed\n");
   });
 

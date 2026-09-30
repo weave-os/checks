@@ -1,14 +1,12 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: Self-check
+name: Run Checks
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
-  # Dogfoods the reusable workflow from this pull request's own commit, the
-  # same way consumers call it at a pinned SHA.
-  self-check:
+  run-checks:
     uses: ./.github/workflows/weave-checks.yml
     permissions:
       id-token: write

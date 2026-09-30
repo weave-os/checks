@@ -342,7 +342,7 @@ ${POLICY_HELP}
       });
       for (const entry of matrix)
         console.error(
-          `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "anthropic")}`,
+          `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "weave-router")}`,
         );
       const checkDigest = checkSetDigest(matrix, repoDir);
 

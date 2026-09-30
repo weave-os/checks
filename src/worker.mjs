@@ -93,7 +93,7 @@ import { formatTranscriptSection } from "./streamsplit.mjs";
 // The CI default provider. `inherit` is not offered here: the worker isolates
 // every check from the runner's own Claude settings (`--setting-sources ""`),
 // so there is nothing to inherit.
-export const DEFAULT_CI_PROVIDER = PROVIDER.ANTHROPIC;
+export const DEFAULT_CI_PROVIDER = PROVIDER.WEAVE_ROUTER;
 
 // Reads and validates one pass's configuration from the environment the
 // action sets. Taking `env` as an argument (rather than reading process.env

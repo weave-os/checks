@@ -1,56 +1,167 @@
 # Weave Checks
 
+[![Weave Badge](https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.weaveos.com%2Fapi%2Frepository%2Fbadge%2Forg_QWsHDcRQWQEs6RpkdEZrlFK8%2F1393877603%2Fhttps%253A%252F%252Fgithub.com&cacheSeconds=3600)](https://app.weaveos.com/reports/repository/org_QWsHDcRQWQEs6RpkdEZrlFK8/https%3A%2F%2Fgithub.com/1393877603)
+![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 [![Tests](https://github.com/weave-os/checks/actions/workflows/test.yml/badge.svg)](https://github.com/weave-os/checks/actions/workflows/test.yml)
 
-Advisory, per-concern code review for GitHub pull requests. Write one Markdown file for each review concern; Weave Checks runs a read-only agent against each check's criteria and the pull request's changed lines. Findings appear as review comments or on the check run. Operational misses stay neutral instead of masquerading as a pass or a finding.
+Software factories have a QA problem. Weave Checks helps your factory output higher quality software, by letting you enforce the principles you care about (without a human reading every line).
 
-This repository contains the reusable GitHub workflow (and the action it runs), the `@weave-os/checks` local CLI/package, a small set of generic starter checks, and an optional library of situational checks. **Your check definitions remain in your repository**; opt into the starter checks with `use-default-checks: true` when you want them alongside your own.
+Historically, code was reviewed by humans. Two of the most important goals of human reviews typically were:
+
+1. Finding bugs
+2. Keeping code quality consistent by communicating the standards of the codebase
+
+AI makes human code reviews unscalable. A software factory cannot rely on a human validating every diff. So we need to replace #1 and #2 somehow.
+
+AI reviewers (e.g. Greptile, Cursor BugBot, CodeRabbit, Cubic, etc.) solve half of the problem: they're very good at #1. But they do not do #2 at all.
+
+Weave Checks is designed to solve #2, with the same scalability as AI bug reviewers.
+
+Weave Checks works best when powered by the [Weave Router](https://weaveos.com/router) - it costs 10x less with identical performance. [See the full breakdown below](#cost).
+
+## Getting started
+
+To set up Weave Checks for your own repository:
+
+1. [Install the Weave Checks app](https://github.com/apps/weave-checks/installations/new)
+1. [Create a Weave Router key](https://router.weaveos.com/build), copy it to your clipboard
+1. Add the key as a repository secret called `WEAVE_ROUTER_KEY` (Settings -> Secrets and variables -> Actions -> New repository secret)
+    - If you're setting up across >1 repo at once, we recommend using an Organization secret instead
+1. Add the workflow to your repo by running this from your repo root:
+
+    ```sh
+    mkdir -p .github/workflows && curl -fsSL https://raw.githubusercontent.com/weave-os/checks/main/examples/weave-checks.yml -o .github/workflows/weave-checks.yml
+    ```
+
+1. Commit & push the change. Now the [starter checks](./starter-checks/) will run in your repository
+1. **Write your own checks**. You can add them to the `.weave-checks` directory in your repo root.
+
+The last step is both the hardest and the most important. **Do not have an agent do it for you**. You need to think about what you care about and encode it in these checks.
+
+A couple useful starting points:
+
+- Have an agent look at human review comments over the last month and pull trends. What types of stuff are AI reviewers missing?
+- Check out our [library](./checks-library/) of useful checks
+
+## Cost
+
+Checks run every time new code is pushed. If you use Anthropic models directly (even Haiku!) this can get quite expensive.
+
+For reference: running the [starter checks](./starter-checks/) on [this example commit](https://github.com/weave-os/checks/commit/131cc9b0318eaa7378b175581569b16f145baef3) costs **$1.07** and takes **7m 29s**. Assuming every engineer on your team pushes 20 commits of a similar size every day, that adds up to **$428/engineer/month**.
+
+Luckily there's a better way: the **[Weave Router](https://weaveos.com/router)** uses the best model for the session automatically, and can use open-source models to get significantly better cost performance & speed, at the same quality. For that same commit, running the starter checks with the Weave Router costs **$0.10** and takes **4m 59s**. That adds up to a much more manageable **$40/engineer/month**.
+
+| Provider     | Cost      | Time       | Monthly Cost per Engineer<sup>1</sup> |
+| ------------ | --------- | ---------- | ------------------------------------- |
+| Anthropic    | $1.07     | 7m 29s     | $428                                  |
+| Weave Router | **$0.10** | **4m 59s** | **$40**                               |
+
+<sup>1</sup> Assumes 20 similar-sized commits per engineer per day.
+
+## How it works
+
+Each **Weave Check** is a single markdown file. Here's a minimal example:
+
+```md
+---
+name: Documentation Signal
+description: Flags documentation that repeats code without preserving a non-obvious contract or rationale
+intelligence: low
+---
+
+Review changed comments and documentation for text that adds no information beyond the adjacent code or signature.
+```
+
+The markdown file is passed to an agent, along with the context of the code changed. The agent can either pass the diff (if it does not violate the check) or fail it, in which case it will post comments explaining the failure.
+
+When you push code that resolves a reported bug, the comment thread will auto resolve.
+
+Here's an [example](https://github.com/weave-os/checks/pull/1#pullrequestreview-5348408708) of a check firing + self-resolving:
+
+![weave checks thread example](./img/weave-checks-example.png)
+
+**This repository does not define what good code looks like**. It just provides the machinery to enforce your own definition. The fun and useful part is writing your own checks!
+
+With that said, we do provide a set of [starter checks](./starter-checks/) which you can opt into. These are battle-tested from our own usage at [Weave](https://weaveos.com) since July 2026. We believe they apply to any codebase. In particular they help get rid of the most common kinds of AI slop that most coding agents love to introduce.
+
+We also provide a [checks library](./checks-library/) for checks that might not apply to every codebase but are quite useful where they do apply. We welcome contributions to this library!
+
+## Running checks locally
+
+This repository also contains the source for the `@weave-os/checks` CLI. Once you have checks in your repo, you can run them locally:
+
+```sh
+npx @weave-os/checks run
+```
+
+## Acknowledgment
 
 > The generic starter-check corpus and per-concern review format adapt material and design from [Continue Checks](https://github.com/continuedev/checks), Copyright 2025 Continue Dev, Inc., Apache-2.0. See [`NOTICE`](NOTICE) for attribution and [`LICENSE`](LICENSE) for this package's license.
 
-## GitHub workflow
+## Documentation
 
-Call the reusable workflow as a job, pinned to a full 40-character commit SHA of this repository:
+### Weave Check Markdown file format
 
-```yaml
+Put one Markdown file per check in the `.weave-checks` directory of your repository.
+
+The Markdown file defining a check must have frontmatter with the following metadata:
+
+- `name`: human-friendly name for the check.
+- `description`: explains what the check is for in one sentence.
+- `intelligence`: one of `low`, `medium`, `high`, or `maximum`. This is a cost optimization lever. Warning: any check that uses `high` or `maximum` will be extremely expensive over time if you run it on every single commit!
+
+After the frontmatter there is no required structure. However, we would recommend including a couple sections in your file to help the agent:
+
+- When to check
+- What to look for
+- What not to look for
+
+Examples can also be very helpful.
+
+Check filenames (without `.md`) must contain only lowercase ASCII letters, digits, and hyphens; the filename becomes the check slug and comment-history marker. A `README.md` in the checks directory is treated as documentation by default. Set `doc-files` to customize this list.
+
+Add a `.ignore` file beside the checks to exclude repository-relative git pathspecs from every review diff, for example:
+
+```text
+# Large generated output
+vendor
+build/generated/*.go
+```
+
+Blank lines and `#` comments are ignored. Unsafe patterns that can exclude the whole repository or escape its root fail discovery rather than silently disabling review.
+
+The generic checks in [`starter-checks/`](starter-checks/) are available as optional defaults. Set `use-default-checks: true` to run them alongside any checks in your configured `checks-dir`; without that setting, only your directory is used. The additional checks in [`checks-library/`](checks-library/) target concerns that may make sense for some repositories but are not universal defaults; see its README before adopting any. Checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
+
+### GitHub workflow
+
+Here is a minimal file that will run Weave Checks, which you can place in your repository's `.github/workflows` directory:
+
+```yml
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: Weave Checks
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 jobs:
   weave-checks:
-    uses: weave-os/checks/.github/workflows/weave-checks.yml@<40-character-commit-sha>
+    uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0
     permissions:
       id-token: write
+    with:
+      use-default-checks: true
     secrets:
       weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
 ```
 
-Pin a commit SHA, not `main` or a tag: Weave issues the App token only to approved commits of this workflow, so a movable ref would stop working when it moves. The job needs nothing but `id-token: write`; every GitHub call it makes is as the Weave Checks App. Pull requests from forks get no OIDC token, so the workflow skips them. It runs on `pull_request` events only; never call it from `pull_request_target`.
+Use a published version tag such as `v1.0`, not a moving branch like `main`. The signed OIDC token identifies the resolved workflow commit (`job_workflow_sha`), and the workflow runs the action from that same commit.
 
-### Setup: install the Weave Checks App
+#### Provider setup
 
-Check runs, reviews, and replies always come from the **Weave Checks** GitHub App. The action never posts as `github-actions[bot]`, and you never handle an App key.
+The workflow defaults to `provider: weave-router`, as in the example above. Set a repository or organization secret named `WEAVE_ROUTER_KEY` and pass it as `weave-router-key`.
 
-1. **Install the App.** Open [github.com/apps/weave-checks](https://github.com/apps/weave-checks/installations/new), choose your organization, and select the repositories that will run Weave Checks. The App needs Checks and Pull requests write access for check runs and reviews, plus Contents write so it can resolve review threads. GitHub gates `resolveReviewThread` behind Contents write even though it changes no repository files. The action uses a repository-scoped installation token and never asks Claude to use it, but the token itself has permission to write repository contents.
-2. **Grant `id-token: write`** to the calling job, as in the example above. The job's own `GITHUB_TOKEN` needs nothing else: even the checkout is made as the App.
-3. **Pass your model provider credentials** as secrets (see [Provider setup](#provider-setup)). A called workflow cannot read your secrets unless you pass them in.
-
-**How the workflow authenticates:** at the start of the job it requests a GitHub OIDC token with the audience `weave-checks`. That token is GitHub's signed statement of which repository is running, and which reusable workflow at which commit (`job_workflow_ref` and `job_workflow_sha`). The workflow runs the action from that same commit, so the code Weave approves is the code that runs. The action sends the token to Weave, which checks it and returns a Weave Checks App installation token. Weave takes the repository from the OIDC token's signed claims, not from anything in the request. The returned token is scoped to that one repository with the App's review permissions, and it expires within an hour. The action uses it for every GitHub call and revokes it when the job finishes. It is never a workflow output.
-
-**If authentication fails, the job stops before creating any check run,** with one of these explanations:
-
-- **`id-token: write` is missing** from the calling job.
-- **The workflow is not an approved commit** of `weave-os/checks/.github/workflows/weave-checks.yml`, or the action was run directly as a step. Pin a released commit SHA.
-- **The App is not installed** on the repository's owner, or not on this repository. Add it from the App's installation settings.
-- **The pull request changes the workflow file that runs Weave Checks.** Weave refuses to issue a token for it, so a pull request cannot rewrite the job that holds the App token. Checks run normally again once the change merges.
-
-### Provider setup
-
-The workflow defaults to `provider: weave-router`, as in the example above. Set a repository or organization secret named `WEAVE_ROUTER_KEY` and pass it as `weave-router-key`. The same key authenticates Router requests and session-cost lookups; no separate Weave API key is needed. Router mode requires an `intelligence` value on every check; the tier becomes the Router force-cluster, and the model alias is derived from the same value. The key is supplied to CLI requests via the `X-Weave-Router-Key` header and used directly for cost lookups.
-
-The production Router URL is used by default. For a self-hosted or staging Router, set the workflow's `weave-router-url` input to its host URL (for example, `${{ vars.WEAVE_ROUTER_URL }}`).
+The production Router URL is used by default. For a self-hosted Router, set the workflow's `weave-router-url` input to its host URL (for example, `${{ vars.WEAVE_ROUTER_URL }}`).
 
 With `provider: anthropic`, pass an Anthropic API key, Claude Code OAuth credentials, or an Anthropic-compatible endpoint through the `provider-env` secret. The Router key is not needed. Example for a gateway, with a repository secret `WEAVE_CHECKS_PROVIDER_ENV` holding the lines to pass:
 
@@ -68,44 +179,36 @@ ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 
 `provider-env` is a secret because it usually carries credentials; its values are set only on the agent process. Other examples include `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_BEDROCK=1`, and `CLAUDE_CODE_USE_VERTEX=1`. For Bedrock/Vertex, configure the relevant cloud identity/region in the job as appropriate.
 
-### Costs
+#### Inputs
 
-Weave Router mode reports the cost from its session-cost API, including Router-side auxiliary inference. Anthropic-compatible modes use the Claude CLI's client-reported estimate when available; a gateway or cloud provider can bill differently. A missing measurement is reported as unknown, never as $0. There is no per-invocation cost ceiling.
+| Input                 | Default         | Purpose                                                                                                  |
+| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
+| `weave-router-url`    | production URL  | Router host URL for `weave-router`; defaults to `https://router.weaveos.com`.                            |
+| `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
+| `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
+| `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
+| `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
+| `concurrency`         | `16`            | Checks run at once.                                                                                      |
+| `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                    |
+| `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                        |
+| `upload-diagnostics`  | `false`         | Upload prompts and transcripts as a workflow artifact.                                                   |
+| `runs-on`             | `ubuntu-latest` | Runner label for the job.                                                                                |
+| `timeout-minutes`     | `30`            | Job timeout.                                                                                             |
 
-## Check files
+#### Secrets
 
-Put one `.md` file per criterion in a directory (the action default is `.weave-checks/`):
+| Secret                                          | Purpose                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| `weave-router-key`                              | Router key used for requests and session-cost lookups, only for Router mode.    |
+| `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them.         |
+| `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line. |
 
-```markdown
----
-name: Error Context
-description: Requires actionable context when reporting an error
-intelligence: medium
----
+#### Outputs
 
-When changed code logs or returns an error, require enough context to identify
-which operation failed without exposing secrets or user content.
-```
+`pass`, `flagged`, `neutral`, and `total-cost`. Result counts distinguish findings (`flagged`) from operational misses (`neutral`). `total-cost` is empty when any contributing cost is unknown. Reviews are posted inline as `COMMENT` reviews; resolution and deduplication judges always run when they have work. These behaviors are fixed, not configurable. There are no per-invocation cost ceilings.
 
-`name`, `description`, and `intelligence` are required. Intelligence must be one of `low`, `medium`, `high`, or `maximum`; it is the only model-selection field in frontmatter. The package maps `low` to Claude Code's rolling `haiku` alias, `medium` to `sonnet`, and `high` or `maximum` to `opus`. On Weave Router, the same tier is sent as the force-cluster. Full aliases track the latest model in each family; they avoid version pins but can change behavior as Claude Code updates its alias target.
-
-Frontmatter is a deliberately restricted, dependency-free format rather than full YAML: use one unquoted, single-line plain value per key. Quoted values, inline comments, lists/maps, tags, and block scalars are rejected instead of being silently misread.
-
-Check filenames (without `.md`) must contain only lowercase ASCII letters, digits, and hyphens; the filename becomes the check slug and comment-history marker. A `README.md` in the checks directory is treated as documentation by default. Set `doc-files` to customize this list.
-
-Add a `.ignore` file beside the checks to exclude repository-relative git pathspecs from every review diff, for example:
-
-```text
-# Large generated output
-vendor
-build/generated/*.go
-```
-
-Blank lines and `#` comments are ignored. Unsafe patterns that can exclude the whole repository or escape its root fail discovery rather than silently disabling review.
-
-The 11 generic checks in [`starter-checks/`](starter-checks/) are available as optional defaults. Set `use-default-checks: true` to run them alongside any checks in your configured `checks-dir`; without that setting, only your directory is used. The additional checks in [`checks-library/`](checks-library/) target concerns that may make sense for some repositories but are not universal defaults; see its README before adopting any. Checks are distributed under this package's Apache-2.0 license; see [`NOTICE`](NOTICE) for attribution.
-
-## Local CLI
+### Local CLI
 
 Run the checks against the current working tree without GitHub access:
 
@@ -134,93 +237,27 @@ npx @weave-os/checks run --provider anthropic --checks-dir .weave-checks --base 
 
 `list --format json` prints the validated matrix. `print-schema` prints the result schema; `print-schema --kind resolution` and `--kind dedup` print the judge schemas.
 
-## Workflow inputs and outputs
+## Security
 
-### Inputs
+### Permissions
 
-| Input                 | Default         | Purpose                                                                                                  |
-| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
-| `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
-| `weave-router-url`    | production URL  | Router host URL for `weave-router`; defaults to `https://router.weaveos.com`.                            |
-| `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
-| `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
-| `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
-| `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
-| `concurrency`         | `16`            | Checks run at once.                                                                                      |
-| `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                    |
-| `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                        |
-| `upload-diagnostics`  | `false`         | Upload prompts and transcripts as a workflow artifact.                                                   |
-| `runs-on`             | `ubuntu-latest` | Runner label for the job.                                                                                |
-| `timeout-minutes`     | `30`            | Job timeout.                                                                                             |
+The App needs Checks and Pull requests write access for check runs and reviews, plus Contents write so it can resolve review threads. GitHub gates `resolveReviewThread` behind Contents write even though it changes no repository files.
 
-### Secrets
+The action uses a repository-scoped installation token and never asks the agent to use it nor provides it to the agent, but the token itself has permission to write repository contents.
 
-| Secret                                          | Purpose                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| `weave-router-key`                              | Router key used for requests and session-cost lookups, only for Router mode.    |
-| `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them.         |
-| `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line. |
+Tool permissions are read-only for the agent. The action and Claude Code CLI still process untrusted pull-request content; nothing in the job executes pull-request code or checks out the PR head before minting the App token.
 
-### Outputs
+### App authentication
 
-`pass`, `flagged`, `neutral`, and `total-cost`. Result counts distinguish findings (`flagged`) from operational misses (`neutral`). `total-cost` is empty when any contributing cost is unknown. Reviews are posted inline as `COMMENT` reviews; resolution and deduplication judges always run when they have work. These behaviors are fixed, not configurable. There are no per-invocation cost ceilings.
+At the start of the job, the app requests a GitHub OIDC token with the audience `weave-checks`. That token is GitHub's signed statement of which repository is running, and which reusable workflow at which commit (`job_workflow_ref` and `job_workflow_sha`). The workflow runs the action from that same commit, so the code Weave approves is the code that runs. The action sends the token to Weave, which checks it and returns a Weave Checks App installation token. Weave takes the repository from the OIDC token's signed claims, not from anything in the request. The returned token is scoped to that one repository with the App's review permissions, and it expires within an hour. The action uses it for every GitHub call and revokes it when the job finishes. It is never a workflow output.
 
-## Behavior and safety boundaries
+The job needs nothing but `id-token: write`; every GitHub call it makes is as the Weave Checks App. Pull requests from forks get no OIDC token, so the workflow skips them. It runs on `pull_request` events only; never call it from `pull_request_target`.
 
-- The action creates the aggregate check run before its repository checkout and preparation. Its always-run cleanup closes it as failure if setup or the worker stops before producing a complete review, so a required aggregate cannot pass without review. The step summary is written even after setup errors.
-- Both the incremental review diff and the full merge-base PR diff are prepared. Resolution judges use the full scope; incremental review is used only when the previous aggregate proves all checks read the earlier diff, the check set is unchanged, and the reviewed commit is an ancestor of the current head. If the base branch moves, affected files are re-diffed from the current merge base. Uncertainty widens the diff rather than skipping unseen code.
-- Child conclusions are `success` for PASS and `neutral` for findings or operational misses. The aggregate is `success` only when every check passes, `neutral` when checks completed but found issues, and `failure` when any check could not complete its review. Findings are visible in comments/check summaries; `fail-on-findings: true` also makes the job fail.
-- Diagnostics include prompts, changed code, tool results, and transcripts. They are not uploaded by default. Enable them only if the repository's privacy and retention policy allows it.
-- Tool permissions are read-only for the agent. The action and Claude Code CLI still process untrusted pull-request content; nothing in the job executes pull-request code or checks out the PR head before minting the App token.
+If authentication fails, the job stops before creating any check run, with one of these explanations:
 
-## Releasing the workflow
-
-Consumers pin a commit of `.github/workflows/weave-checks.yml`, and Weave's token exchange accepts only commits on its versioned allowlist. Roll a release forward in this order:
-
-1. Merge the change to `main` and note the commit SHA.
-2. Add that SHA to the exchange's allowlist and deploy it.
-3. Publish the SHA in the release notes and docs.
-4. Migrate consumers to the new SHA, then remove SHAs no consumer should still run.
-
-This repository's own self-check calls the workflow from the pull request's commit, so it tests the change under review. The exchange must accept `weave-os/checks` at any commit for that to work.
-
-## Publishing
-
-The npm package is `@weave-os/checks`. As in the Weave Router release flow, each release starts with a version-bump PR; merging does not publish by itself. Once the version change is on `main`, pushing a `checks-v<version>` tag starts the publisher. The tag must point to a commit reachable from `main` and match `package.json` exactly.
-
-The workflow verifies the tag/version and main ancestry, runs the tests, installs the packed tarball into a clean consumer directory and validates both bundled check collections, then publishes with provenance. It uses npm trusted publishing (OIDC), with `id-token: write` limited to the publish job; no npm token is stored in GitHub.
-
-### One-time npm setup
-
-npm requires a package to exist before you can configure its trusted publisher. The registry currently has no `@weave-os/checks` package, so the initial package bootstrap cannot use this OIDC workflow. After the initial release commit is on `main`, run the first publish once from a maintainer machine using npm's normal authenticated CLI flow:
-
-```sh
-npm login
-npm publish --access public
-```
-
-Then immediately configure the trusted publisher in npmjs.com → `@weave-os/checks` → **Settings → Trusted Publisher**:
-
-- Provider: GitHub Actions
-- Organization: `weave-os`
-- Repository: `checks`
-- Workflow filename: `publish-npm.yml`
-- Allow direct publishing with `npm publish` (the workflow does not use staged publishing)
-
-Do not push a `checks-v<version>` tag for the version published manually; the workflow would correctly reject trying to publish that immutable version again. The manual bootstrap will not carry GitHub Actions provenance; subsequent tagged releases will. Revoke any temporary npm token after the bootstrap. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for current requirements.
-
-### Release a version after setup
-
-1. Update `version` in `package.json` in a PR. Use the normal test checks and merge the bump to `main`.
-2. From an up-to-date local `main`, create and push an annotated tag for that exact version:
-
-   ```sh
-   version="$(node -p "require('./package.json').version")"
-   git tag -a "checks-v${version}" -m "Release checks v${version}"
-   git push origin "checks-v${version}"
-   ```
-
-3. Follow the **Publish npm** workflow in GitHub Actions. A failed run does not publish; fix the issue and rerun it, or publish a new version if that version already reached npm.
+- `id-token: write` is missing from the calling job.
+- The workflow commit is not approved for `weave-os/checks/.github/workflows/weave-checks.yml`, or the action was run directly as a step. Use a published version tag such as `v1.0`.
+- The App is not installed on the repository's owner, or not on this repository. Add it from the App's installation settings.
 
 ## License
 

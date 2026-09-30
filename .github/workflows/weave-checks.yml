@@ -1,12 +1,12 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: Weave Checks
 
-# The supported way to run Weave Checks. Call it as a job, pinned to a full
-# commit SHA:
+# The supported way to run Weave Checks. Call it as a job, pinned to a
+# published version tag such as v1.0:
 #
 #   jobs:
 #     weave-checks:
-#       uses: weave-os/checks/.github/workflows/weave-checks.yml@<commit-sha>
+#       uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0
 #       permissions:
 #         id-token: write
 #       secrets:
