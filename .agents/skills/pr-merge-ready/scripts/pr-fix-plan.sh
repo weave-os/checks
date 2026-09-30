@@ -32,17 +32,17 @@ Usage: $(basename "$0") PR_NUMBER [--owner OWNER --repo REPO] [--max-comments N]
 Analyze a GitHub PR's unresolved review comments and emit a structured fix plan.
 
 Options:
-  --owner OWNER      GitHub org/user (default: parsed from the 'origin' remote)
-  --repo REPO        GitHub repo name (default: parsed from the 'origin' remote)
+  --owner OWNER      GitHub org/user (default: repository selected by gh)
+  --repo REPO        GitHub repo name (default: repository selected by gh)
   --max-comments N   Max unresolved comments to include; extras are reported as
                      pattern_summary.truncated_count (0 = no cap) [default: $DEFAULT_MAX_COMMENTS]
   --json             Emit structured JSON instead of text
   -h, --help         Show this help
 
 JSON output fields:
-  head_branch, is_checked_out, changed_files,
+  head_branch, head_sha, is_checked_out, changed_files,
   unresolved_comments[]: file, line, start_line, authors, body, urls,
-                         thread_ids, is_outdated, collapsed_count,
+                         comments, thread_ids, is_outdated, collapsed_count,
                          code_context (omitted when unknown),
                          related_lines_in_pr, thread_comments
   top_level_comments[] (omitted when empty): source, author, body, url, created_at
@@ -180,6 +180,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $pr) {
       headRefName
+      headRefOid
       reviewThreads(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -215,6 +216,7 @@ readonly THREAD_PAGE_VERDICT='
 readonly THREAD_PAGES_MERGE='
 {
   head_branch: (.[0].data.repository.pullRequest.headRefName // ""),
+  head_sha: (.[0].data.repository.pullRequest.headRefOid // ""),
   threads: [
     .[].data.repository.pullRequest.reviewThreads.nodes[]
     | {
@@ -345,8 +347,13 @@ def parse_diff:
       # rename lines, ...) before the first hunk are never read as content.
       if ($row | startswith("diff --git ")) then .in_hunk = false
       elif ($row | startswith("+++ b/")) then
+        ($row[6:]) as $new_path
+        | (if .path != null and .path != $new_path then .files += [{path, lines}] | .lines = {} else . end)
+        | .path = $new_path
+        | .in_hunk = false
+      elif ($row | startswith("rename to ")) then
         (if .path != null then .files += [{path, lines}] | .lines = {} else . end)
-        | .path = $row[6:]
+        | .path = $row[10:]
         | .in_hunk = false
       elif ($row | startswith("--- ")) or ($row | startswith("index ")) then .
       elif ($row | startswith("@@ ")) then
@@ -402,6 +409,7 @@ def merge_into($other):
   .authors |= append_unique($other.authors)
   | .body = .body + "\n---\n" + $other.body
   | .urls += $other.urls
+  | .comments += $other.comments
   | .thread_ids |= append_unique($other.thread_ids)
   | .collapsed_count += $other.collapsed_count
   | .thread_comments += $other.thread_comments
@@ -434,7 +442,7 @@ def collapse_same_location:
       end);
 
 def comment_output:
-  {file, line, start_line, authors, body, urls, thread_ids, is_outdated, collapsed_count}
+  {file, line, start_line, authors, body, urls, comments, thread_ids, is_outdated, collapsed_count}
   + (if .code_context != null then {code_context} else {} end)
   + {related_lines_in_pr, thread_comments};
 
@@ -485,20 +493,21 @@ def top_level_comments($reviews; $issue_comments):
 | [ $pull.threads[] | select(.is_resolved | not) ] as $unresolved
 | ( [ $unresolved[]
       | (if .path != null and .line != null then code_at($files; .path; .line) else null end) as $code_context
-      | .comments[0] as $first
+      | .comments as $thread_comments
       | {
           file: .path,
           line,
           start_line,
-          authors: [$first.author // "ghost"],
-          body: ($first.body // ""),
-          urls: [$first.url // ""],
+          authors: (reduce $thread_comments[] as $comment ([]; append_unique([$comment.author // "ghost"]))),
+          body: ($thread_comments | map(.body // "") | join("\n---\n")),
+          urls: [$thread_comments[].url],
+          comments: $thread_comments,
           thread_ids: (if .id == "" then [] else [.id] end),
           is_outdated,
           collapsed_count: 1,
           code_context: $code_context,
           related_lines_in_pr: related_lines($pattern_index; .path; $code_context),
-          thread_comments: (.comments | length)
+          thread_comments: ($thread_comments | length)
         } ]
     | collapse_same_location ) as $collapsed
 | ($collapsed | length) as $after_collapsing
@@ -511,7 +520,8 @@ def top_level_comments($reviews; $issue_comments):
     owner: $owner,
     repo: $repo,
     head_branch: $pull.head_branch,
-    is_checked_out: ($current_branch != "" and $current_branch == $pull.head_branch),
+    head_sha: $pull.head_sha,
+    is_checked_out: ($current_sha != "" and $current_sha == $pull.head_sha),
     changed_files: [$files[].path],
     unresolved_comments: [$collapsed[:$cap][] | comment_output]
   }
@@ -630,6 +640,7 @@ fetch_conversation_comments "$WORK_DIR/issue-comments.json" "$WORK_DIR/issue-com
 comments_pid=$!
 
 current_branch=$(git branch --show-current 2>/dev/null || true)
+current_sha=$(git rev-parse HEAD 2>/dev/null || true)
 
 # Threads and diff are required; checks, reviews, and conversation comments
 # are best-effort and must not sink the plan.
@@ -663,6 +674,7 @@ jq -n \
   --arg owner "$OWNER" \
   --arg repo "$REPO" \
   --arg current_branch "$current_branch" \
+  --arg current_sha "$current_sha" \
   --argjson max_comments "$MAX_COMMENTS" \
   --argjson checks_fetch_failed "$checks_fetch_failed" \
   --slurpfile review_data "$WORK_DIR/threads.json" \

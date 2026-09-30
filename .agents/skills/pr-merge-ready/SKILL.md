@@ -61,7 +61,7 @@ If the branch is out of date: `git push --force-with-lease` only after verifying
 ## High-level loop
 
 ```
-0. Identify or create PR; align local branch with pr.headRefName
+0. Identify or create PR; align checkout with the PR's base repository and head SHA
 0b. WEAVE-CHECKS PREFLIGHT: read weave-checks criteria for the files in play
 1. Fetch fresh state
 2. If DONE → exit
@@ -103,12 +103,28 @@ no PR yet, create one before fetching review state:
 
 If there are no changes to publish and no PR exists, stop and ask the user what should be reviewed.
 
+Resolve `OWNER/REPO` to the PR's **base repository** from the current repository context. The head owner/repository identify the fork containing the code; do not pass those values to the analyzer, which queries the PR in its base repository.
+
 ```bash
-gh pr view "${PR_NUMBER:-}" --json number,headRepositoryOwner,headRepository,headRefName,headRefOid \
-  -q '{owner: .headRepositoryOwner.login, repo: .headRepository.name, number: .number, branch: .headRefName, sha: .headRefOid}'
+read -r OWNER REPO < <(gh repo view --json owner,name --jq '[.owner.login, .name] | @tsv')
+gh pr view "${PR_NUMBER:-}" --repo "$OWNER/$REPO" \
+  --json number,headRepositoryOwner,headRepository,headRefName,headRefOid \
+  -q '{number: .number, head_owner: .headRepositoryOwner.login, head_repo: .headRepository.name, branch: .headRefName, sha: .headRefOid}'
 ```
 
-If mid-stack (`gh stack view --short`), verify `git branch --show-current` matches `headRefName`. Run `gh stack checkout <headRefName>` if not. Fixes always go on the PR's own branch.
+If the base repository cannot be resolved from the checkout, use the base repository explicitly; never substitute the fork's head repository. Keep `head_owner`, `head_repo`, `branch`, and `sha` as separate head metadata.
+
+For a mid-stack PR (`gh stack view --short`), run `gh stack checkout <headRefName>` when needed, then verify `git rev-parse HEAD` equals the PR's `headRefOid`. For a non-stack PR, use the PR number and base repository so GitHub CLI can select the correct fork ref; do not check out by branch name alone:
+
+```bash
+# Stop rather than switching away from uncommitted work.
+test -z "$(git status --porcelain)" || { echo "Working tree is dirty" >&2; exit 1; }
+LOCAL_PR_BRANCH="pr-${PR_NUMBER}-${HEAD_SHA:0:12}"
+gh pr checkout "$PR_NUMBER" --repo "$OWNER/$REPO" --branch "$LOCAL_PR_BRANCH"
+test "$(git rev-parse HEAD)" = "$HEAD_SHA" || { echo "PR head SHA mismatch" >&2; exit 1; }
+```
+
+If that unique local branch already exists at a different commit, choose another unused local name rather than resetting it. Before editing or pushing, verify the local branch tracks the PR head ref from `head_owner/head_repo`. If the checkout or upstream cannot be verified safely, stop and ask. Fixes always go on the PR's own head branch.
 
 ### Step 0b: Weave-checks preflight (once, before any triage or edit)
 
@@ -127,7 +143,7 @@ gh pr view "$PR_NUMBER" --json headRefOid,reviewDecision,reviewRequests,latestRe
 
 `pr-fix-plan --json` returns:
 
-- `head_branch` / `is_checked_out` — checkout `head_branch` if `is_checked_out` is false
+- `head_branch`, `head_sha`, and `is_checked_out` — `is_checked_out` means the local `HEAD` SHA equals the PR head SHA; if false, use Step 0's safe checkout rather than checking out by branch name alone
 - `changed_files` — do NOT re-derive via `git diff`
 - `unresolved_comments` — unresolved, collapsed. Each has `file`, `line`, `start_line`, `authors`, `body`, `urls`, `thread_ids`, `is_outdated`, `collapsed_count`, `code_context`, `related_lines_in_pr`, `thread_comments`
 - `top_level_comments` — omitted when empty
@@ -212,12 +228,25 @@ Run this **after every Fix in this iteration is applied**, and **never per comme
 Scope to **this iteration's uncommitted edits**.
 
 ```bash
-CHANGED_FILES=$( { git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u )
+CHANGED_FILES=()
+while IFS= read -r -d '' file; do
+  [[ -f $file ]] && CHANGED_FILES+=("$file")
+done < <({
+  git diff --name-only -z
+  git diff --cached --name-only -z
+  git ls-files --others --exclude-standard -z
+})
 ```
 
 #### Autofix first (so lint lands in the same commit)
 
-- `npm run format`
+Format only existing paths from this iteration's `CHANGED_FILES`; do not run a repository-wide write formatter here.
+
+```bash
+if ((${#CHANGED_FILES[@]})); then
+  npx prettier --write --ignore-unknown -- "${CHANGED_FILES[@]}"
+fi
+```
 
 #### Then run tests
 
@@ -350,7 +379,7 @@ loop:
   # Dispatch check ONCE after the first sentinel cycle, not every tick
   if not yet validated dispatch:
     check_run_count = gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --jq '.total_count'
-    if check_run_count < 5: continue   # not dispatched yet; don't false-DONE
+    if check_run_count == 0: continue  # no runs dispatched yet; don't false-DONE
 
   # Full CI check every ~5 sentinel cycles (~2 min), not every tick
   if cycles_since_last_ci_check >= 5:
@@ -425,7 +454,7 @@ If after **5 full iterations** (5 push cycles) the loop hasn't terminated, stop 
 | Sitting in CI wait without polling for new threads                            | Auto-reviewers post during CI                                                                                                  | Sentinel every 15–30s                                                       |
 | Polling CI immediately after push                                             | `pending=0` before dispatch → false DONE                                                                                       | Anchor on `commits/$HEAD_SHA/check-runs` count                              |
 | Treating "0 threads at push time" as forever                                  | Bots post minutes later                                                                                                        | Sentinel + re-fetch after CI                                                |
-| Conflating PRs in a stack                                                     | Comments on PR #2 fixed on PR #1's branch                                                                                      | `git branch --show-current == pr.headRefName` each iteration                |
+| Conflating PRs in a stack                                                     | Comments on PR #2 fixed on PR #1's branch                                                                                      | Verify base repo, head repo, and checked-out head SHA each iteration        |
 | Auto-fixing a product/architecture/scope decision                             | Shipped an opinionated change the author didn't want                                                                           | Escalate                                                                    |
 | Asking with no research or options                                            | Forces the human to do the legwork                                                                                             | Investigate, then 2–4 grounded options + recommendation                     |
 | Running `pr-fix-plan` on every sentinel tick                                  | Wastes ~2s/tick                                                                                                                | Cheap GraphQL sentinel; full fetch on fire or ~2 min                        |
