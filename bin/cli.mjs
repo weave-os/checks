@@ -62,11 +62,11 @@ const POLICY_OPTIONS = {
   "doc-files": { type: "string", default: "README.md" },
 };
 
-const POLICY_HELP = `  --checks-dir <dir>          Checks directory, relative to the repo (default: ${DEFAULT_CHECKS_DIR})
-  --repo-dir <dir>            Repository root (default: .)
-  --provider <name>           anthropic | weave-router | inherit (default: inherit)
+const POLICY_HELP = `  --checks-dir <dir>            Checks directory, relative to the repo (default: ${DEFAULT_CHECKS_DIR})
+  --repo-dir <dir>              Repository root (default: .)
+  --provider <name>             anthropic | weave-router | inherit (default: inherit)
   --allowed-intelligence <list> Comma-separated tiers: low, medium, high, maximum (default: all)
-  --doc-files <list>          Markdown files in the checks directory that are docs (default: README.md)`;
+  --doc-files <list>            Markdown files in the checks directory that are docs (default: README.md)`;
 
 function discoverFromOptions(values) {
   const checksDir = validateChecksDir(values["checks-dir"]);
@@ -87,17 +87,17 @@ and verdict pipeline as the GitHub action. No GitHub state is read or written:
 there is no thread history, so nothing is deduplicated or resolved.
 
 ${POLICY_HELP}
-  --base <ref>              Branch the change will merge into (default: ${DEFAULT_BASE}, or main without it)
-  --no-merge-base           Diff against --base itself instead of its merge base with HEAD
-  --github-merge-base <o/r> Resolve the merge base with GitHub's compare API (needs GITHUB_TOKEN
-                            and HEAD pushed); for shallow clones
-  --head <ref>              Review a committed range --base...<ref> instead of the working tree
-  --only <slugs>            Comma-separated checks to run
-  --format <fmt>            text | markdown | json (default: text)
-  --output <file>           Also write the JSON results here
-  --artifacts-dir <dir>     Keep prompts, transcripts, and results here (default: a temp dir)
-  --parallel <n>            Checks run at once (default: 4)
-  --no-fail                 Exit 0 even when a check flags findings
+  --base <ref>                  Branch the change will merge into (default: ${DEFAULT_BASE}, or main without it)
+  --no-merge-base               Diff against --base itself instead of its merge base with HEAD
+  --github-merge-base <o/r>     Resolve the merge base with GitHub's compare API (needs GITHUB_TOKEN
+                                and HEAD pushed); for shallow clones
+  --head <ref>                  Review a committed range --base...<ref> instead of the working tree
+  --only <slugs>                Comma-separated checks to run
+  --format <fmt>                text | markdown | json (default: text)
+  --output <file>               Also write the JSON results here
+  --artifacts-dir <dir>         Keep prompts, transcripts, and results here (default: a temp dir)
+  --parallel <n>                Checks run at once (default: 4)
+  --no-fail                     Exit 0 even when a check flags findings
 
 Providers:
   inherit        Your own Claude Code configuration, unchanged (default)
@@ -226,7 +226,7 @@ Validates every check file and lists it. Exits non-zero on the first
 malformed check, the same way the action's discovery step does.
 
 ${POLICY_HELP}
-  --format <text|json>      Output format (default: text)
+  --format <text|json>          Output format (default: text)
 `,
     options: { ...POLICY_OPTIONS, format: { type: "string", default: "text" } },
     run(values) {
