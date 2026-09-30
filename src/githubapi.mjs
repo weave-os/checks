@@ -314,10 +314,8 @@ export async function requestWithRetry(
 }
 
 // `retryDelaysMs[attempt]` is the base delay before attempt N+1; index 0 is
-// the always-immediate first attempt, so this is only ever called with a
-// positive base. Guarded anyway: a caller-supplied ladder shorter than
-// maxAttempts would otherwise produce NaN and sleep forever.
+// the always-immediate first attempt. The loop only schedules delays when
+// another attempt remains, so the index is always in range.
 function jitter(baseDelayMs, randomFn) {
-  if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) return 0;
   return baseDelayMs * (1 - RETRY_JITTER_FRACTION + randomFn() * RETRY_JITTER_FRACTION);
 }

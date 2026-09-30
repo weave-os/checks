@@ -414,8 +414,8 @@ export function reviewsToDismiss(checkThreads, resolvedThisRun) {
 //     the same mutation every run would land in historyErrors forever.
 //     Skipping matches real state.
 export function reviewsToHide(checkThreads, dismissedIds, resolvedThisRun) {
-  const dismissedSet = new Set(dismissedIds ?? []);
-  const resolvedThisRunSet = new Set(resolvedThisRun ?? []);
+  const dismissedSet = new Set(dismissedIds);
+  const resolvedThisRunSet = new Set(resolvedThisRun);
   const resolvedFlagsByReview = new Map();
   const threadByReview = new Map();
 

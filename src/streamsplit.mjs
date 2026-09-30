@@ -145,7 +145,7 @@ export function summarizeTranscript(text) {
 
 function renderSessionBlock(session, byteBudget) {
   const text = session.text;
-  if (text === "" && (typeof session.sessionId !== "string" || session.sessionId === "")) {
+  if (text === "" && session.sessionId === null) {
     return null;
   }
   // The session header shows the provider-reported cost for this attempt,
@@ -248,7 +248,10 @@ function summarizeAssistant(event, toolNames) {
       const signatureBytes =
         typeof block.signature === "string" ? Buffer.byteLength(block.signature, "utf8") : 0;
       const details = [`${thinkingChars.toLocaleString()} chars`];
-      if (signatureBytes > 0) details.push(`${formatBytes(signatureBytes)} signature`);
+      if (signatureBytes > 0)
+        details.push(
+          `${signatureBytes < 1024 ? `${signatureBytes} B` : `${(signatureBytes / 1024).toFixed(1)} KB`} signature`,
+        );
       lines.push(`Assistant thinking · ${details.join(" · ")}`);
     } else if (block.type === CONTENT_BLOCK_TYPE.TOOL_USE) {
       const name = typeof block.name === "string" ? block.name : "tool";
@@ -352,10 +355,6 @@ function shortenJson(value) {
 
 function displayType(value) {
   return typeof value === "string" && value !== "" ? value : "Unknown";
-}
-
-function formatBytes(bytes) {
-  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 function isRecord(value) {

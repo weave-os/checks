@@ -67,7 +67,6 @@ export async function resolveMergeBase({ rest, repository, baseSha, headSha }) {
   return sha;
 }
 
-// The PR's commits, newest first, excluding the head itself.
 async function priorPRCommits({ rest, repository, prNumber, headSha }) {
   const shas = [];
   for (let page = 1; page <= PR_COMMITS_MAX_PAGES; page += 1) {

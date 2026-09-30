@@ -50,15 +50,9 @@ inputs:
   diff-base:
     description: incremental (review only what changed since the last fully reviewed commit) or merge-base (always review the whole PR).
     default: incremental
-  node-version:
-    description: Node.js version for the action's own scripts.
-    default: "22"
   claude-code-version:
     description: "@anthropic-ai/claude-code version to install. Pin it for reproducible reviews."
     default: latest
-  checkout:
-    description: Check out the PR merge commit. Set to false if the job already checked out the PR (merge commit or head).
-    default: "true"
   fail-on-findings:
     description: Fail the job when any check flags findings. Check runs themselves are never marked failed.
     default: "false"
@@ -113,7 +107,7 @@ runs:
     - name: Set up Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: ${{ inputs.node-version }}
+        node-version: "22"
         # Nothing to cache: the action has no dependencies, and the consumer's
         # repository is not checked out yet.
         package-manager-cache: false
@@ -162,7 +156,6 @@ runs:
     # code; depth 2 makes its PR-head parent available for verification. The
     # diffs themselves name explicit SHAs and fetch what they need.
     - name: Check out the PR merge commit
-      if: inputs.checkout == 'true'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         path: .weave-checks-repo
@@ -187,7 +180,7 @@ runs:
       env:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
         WEAVE_CHECKS_APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        REPO_DIR: ${{ inputs.checkout == 'true' && format('{0}/.weave-checks-repo', github.workspace) || github.workspace }}
+        REPO_DIR: ${{ github.workspace }}/.weave-checks-repo
         WEAVE_CHECKS_TEMP_DIR: ${{ runner.temp }}/weave-checks
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -208,7 +201,7 @@ runs:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        REPO_DIR: ${{ inputs.checkout == 'true' && format('{0}/.weave-checks-repo', github.workspace) || github.workspace }}
+        REPO_DIR: ${{ github.workspace }}/.weave-checks-repo
         MATRIX_PATH: ${{ runner.temp }}/weave-checks/matrix.json
         DIFF_PATH: ${{ runner.temp }}/weave-checks/pr.diff
         STAT_PATH: ${{ runner.temp }}/weave-checks/pr.stat

@@ -210,18 +210,18 @@ describe("readWorkerConfig", () => {
     ]) {
       assert.equal(Object.hasOwn(config, option), false, option);
     }
-    const { env: noRouter } = workerEnv({ WEAVE_ROUTER_KEY: "" });
-    assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
+    const { env: missingRouterKeyEnv } = workerEnv({ WEAVE_ROUTER_KEY: "" });
+    assert.throws(() => readWorkerConfig(missingRouterKeyEnv), /requires WEAVE_ROUTER_KEY/);
   });
 
   it("fails at startup when weave-router is missing its key", () => {
     const { env } = workerEnv({ WEAVE_CHECKS_PROVIDER: "weave-router", WEAVE_ROUTER_KEY: "rk" });
     assert.equal(readWorkerConfig(env).provider.id, "weave-router");
-    const { env: noRouter } = workerEnv({
+    const { env: missingRouterKeyEnv } = workerEnv({
       WEAVE_CHECKS_PROVIDER: "weave-router",
       WEAVE_ROUTER_KEY: "",
     });
-    assert.throws(() => readWorkerConfig(noRouter), /requires WEAVE_ROUTER_KEY/);
+    assert.throws(() => readWorkerConfig(missingRouterKeyEnv), /requires WEAVE_ROUTER_KEY/);
   });
 
   it("refuses the local-only inherit provider", () => {

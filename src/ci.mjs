@@ -99,7 +99,6 @@ export function report({ resultsPath, summaryPath, outputPath, failOnFindings })
   return { ok: true, message: null };
 }
 
-// Appends `name=value` lines to $GITHUB_OUTPUT (or prints them locally).
 export function writeOutputs(outputPath, outputs) {
   const text = Object.entries(outputs)
     .map(([name, value]) => `${name}=${value}\n`)

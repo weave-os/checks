@@ -562,7 +562,7 @@ export async function runWorker(config, deps = {}) {
       schemaText: JSON.stringify(RESOLUTION_SCHEMA),
       promptText: resolutionPromptFor(check, openThreads),
     });
-    recordAttempt?.("Resolution judge", invocation);
+    recordAttempt("Resolution judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
       label: "Resolution judge",
     });
@@ -608,7 +608,7 @@ export async function runWorker(config, deps = {}) {
       schemaText: JSON.stringify(DEDUP_SCHEMA),
       promptText: dedupPromptFor(check, checkThreads, accepted),
     });
-    recordAttempt?.("Dedup judge", invocation);
+    recordAttempt("Dedup judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
       label: "Duplicate judge",
     });
@@ -814,8 +814,8 @@ export async function runWorker(config, deps = {}) {
   // `recordAttempt`, when provided, is forwarded to the dedup judge so the
   // invocation's transcript reaches the per-phase evidence block.
   async function applyFindings(check, checkThreads, result, recordAttempt) {
-    const dedup = await judgeDuplicates(check, checkThreads, result.accepted ?? [], recordAttempt);
-    const dedupDropped = (result.accepted?.length ?? 0) - dedup.accepted.length;
+    const dedup = await judgeDuplicates(check, checkThreads, result.accepted, recordAttempt);
+    const dedupDropped = result.accepted.length - dedup.accepted.length;
     const comments = dedup.accepted.map(suggestion => {
       const comment = formatReviewComment(suggestion);
       return { ...comment, body: MARKERS.append(comment.body, check.slug) };
