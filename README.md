@@ -26,12 +26,12 @@ To set up Weave Checks for your own repository:
 1. [Install the Weave Checks app](https://github.com/apps/weave-checks/installations/new)
 1. [Create a Weave Router key](https://router.weaveos.com/build), copy it to your clipboard
 1. Add the key as a repository secret called `WEAVE_ROUTER_KEY` (Settings -> Secrets and variables -> Actions -> New repository secret)
-    - If you're setting up across >1 repo at once, we recommend using an Organization secret instead
+   - If you're setting up across >1 repo at once, we recommend using an Organization secret instead
 1. Add the workflow to your repo by running this from your repo root:
 
-    ```sh
-    mkdir -p .github/workflows && curl -fsSL https://raw.githubusercontent.com/weave-os/checks/main/examples/weave-checks.yml -o .github/workflows/weave-checks.yml
-    ```
+   ```sh
+   mkdir -p .github/workflows && curl -fsSL https://raw.githubusercontent.com/weave-os/checks/main/examples/weave-checks.yml -o .github/workflows/weave-checks.yml
+   ```
 
 1. Commit & push the change. Now the [starter checks](./starter-checks/) will run in your repository
 1. **Write your own checks**. You can add them to the `.weave-checks` directory in your repo root.
