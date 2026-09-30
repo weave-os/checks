@@ -351,9 +351,13 @@ describe("parseAddedLines", () => {
 
   it("tracks multiple files independently", () => {
     const diff = [
+      "diff --git a/a.ts b/a.ts",
+      "--- a/a.ts",
       "+++ b/a.ts",
       "@@ -0,0 +1,1 @@",
       "+a",
+      "diff --git a/b.ts b/b.ts",
+      "--- a/b.ts",
       "+++ b/b.ts",
       "@@ -0,0 +7,1 @@",
       "+b",
@@ -363,6 +367,21 @@ describe("parseAddedLines", () => {
     assert.deepEqual([...lines.get("b.ts")], [7]);
   });
 
+  it("keeps added source lines beginning with plus signs in the current file", () => {
+    const diff = [
+      "diff --git a/plus.go b/plus.go",
+      "--- a/plus.go",
+      "+++ b/plus.go",
+      "@@ -0,0 +1,2 @@",
+      "+++ source line",
+      "+another line",
+    ].join("\n");
+
+    const lines = parseAddedLines(diff);
+    assert.deepEqual([...lines.keys()], ["plus.go"]);
+    assert.deepEqual([...lines.get("plus.go")], [1, 2]);
+  });
+
   it("ignores deleted files", () => {
     const diff = ["--- a/gone.ts", "+++ /dev/null", "@@ -1,2 +0,0 @@", "-x"].join("\n");
     assert.equal(parseAddedLines(diff).size, 0);
@@ -370,21 +389,33 @@ describe("parseAddedLines", () => {
 
   it("decodes quoted Git paths and clears the prior file on an unknown header", () => {
     const diff = [
+      "diff --git a/first.go b/first.go",
+      "--- a/first.go",
       "+++ b/first.go",
       "@@ -0,0 +1 @@",
       "+first",
+      "diff --git a/tab\tname.go b/tab\tname.go",
+      "--- a/tab\tname.go",
       String.raw`+++ "b/tab\tname.go"`,
       "@@ -0,0 +2 @@",
       "+tab",
+      "diff --git a/café.md b/café.md",
+      "--- a/café.md",
       String.raw`+++ "b/caf\303\251.md"`,
       "@@ -0,0 +3 @@",
       "+utf8",
+      String.raw`diff --git a/quote\"slash\\file.go b/quote\"slash\\file.go`,
+      String.raw`--- a/quote\"slash\\file.go`,
       String.raw`+++ "b/quote\"slash\\file.go"`,
       "@@ -0,0 +4 @@",
       "+escaped",
+      'diff --git "a/space name.go" "b/space name.go"',
+      '--- "a/space name.go"',
       '+++ "b/space name.go"\t2026-01-01',
       "@@ -0,0 +5 @@",
       "+space",
+      "diff --git a/broken.go b/broken.go",
+      "--- a/broken.go",
       String.raw`+++ "b/broken\q.go"`,
       "@@ -0,0 +6 @@",
       "+must not attach to previous file",

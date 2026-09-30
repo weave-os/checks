@@ -431,12 +431,18 @@ function unquoteGitPath(value) {
 export function parseAddedLines(diffText) {
   const byFile = new Map();
   let current = null;
+  let inHunk = false;
 
   for (const line of diffText.split("\n")) {
-    if (line.startsWith("+++ ")) {
+    if (line.startsWith("diff --git ")) {
       current = null;
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk && line.startsWith("+++ ")) {
       const headerPath = unquoteGitPath(line.slice("+++ ".length));
       if (headerPath === null || headerPath === "/dev/null" || !headerPath.startsWith("b/")) {
+        current = null;
         continue;
       }
       current = headerPath.slice("b/".length);
@@ -448,6 +454,7 @@ export function parseAddedLines(diffText) {
     if (!line.startsWith("@@") || current === null) {
       continue;
     }
+    inHunk = true;
     // @@ -old,oldCount +new,newCount @@
     const hunk = /\+(\d+)(?:,(\d+))?/.exec(line);
     if (hunk === null) {
