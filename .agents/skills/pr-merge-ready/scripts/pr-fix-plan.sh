@@ -122,20 +122,12 @@ command -v gh >/dev/null 2>&1 || die "GitHub CLI (gh) not found. Install it from
 # Owner / repo resolution
 # ============================================================================
 
-parse_github_remote() {
-  local url=$1 path
-  case $url in
-    git@github.com:*) path=${url#git@github.com:} ;;
-    https://github.com/*) path=${url#https://github.com/} ;;
-    http://github.com/*) path=${url#http://github.com/} ;;
-    *) die "Not a GitHub URL: $url. Use --owner and --repo flags." ;;
-  esac
-  path=${path%.git}
-  [[ $path == */* ]] || die "Could not parse owner/repo from URL"
-  OWNER=${path%%/*}
-  path=${path#*/}
-  REPO=${path%%/*}
-  [[ -n $OWNER && -n $REPO ]] || die "Could not parse owner/repo from URL"
+resolve_github_remote() {
+  local repo
+  repo=$(gh repo view --json owner,name --jq '[.owner.login, .name] | @tsv') ||
+    die "Could not resolve owner/repo with GitHub CLI"
+  IFS=$'\t' read -r OWNER REPO <<<"$repo"
+  [[ -n $OWNER && -n $REPO ]] || die "Could not resolve owner/repo with GitHub CLI"
 }
 
 if [[ -n $OWNER && -z $REPO ]]; then
@@ -143,8 +135,7 @@ if [[ -n $OWNER && -z $REPO ]]; then
 elif [[ -z $OWNER && -n $REPO ]]; then
   die "--repo requires --owner"
 elif [[ -z $OWNER ]]; then
-  origin_url=$(git remote get-url origin 2>/dev/null) || die "Not in a git repository or no 'origin' remote"
-  parse_github_remote "$origin_url"
+  resolve_github_remote
 fi
 
 # ============================================================================
