@@ -1,0 +1,15 @@
+Weave Checks
+Copyright 2026 Weave
+
+This product includes software developed at Weave (https://github.com/weave-os).
+
+Portions of this product are adapted from Continue Checks
+(https://github.com/continuedev/checks), licensed under the Apache License,
+Version 2.0:
+
+    Copyright 2025 Continue Dev, Inc.
+
+The starter-check corpus and per-concern Markdown format adapt material and
+design from Continue Checks; the division of labour between linters, tests,
+and checks also derives from that project. Other starter-check wording and
+criteria have been reviewed and generalized for this package.

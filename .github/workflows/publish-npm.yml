@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+# npm OIDC trusted publishing: npmjs.com -> @weave-os/checks -> Trusted
+# Publishers -> GitHub Actions, org=weave-os, repo=checks,
+# workflow=publish-npm.yml. No long-lived npm token is stored in GitHub.
+name: Publish npm
+
+on:
+  push:
+    tags:
+      - "checks-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @weave-os/checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing and provenance; publish job only
+    steps:
+      # This privileged job publishes to npm, so third-party actions are
+      # pinned to full commit SHAs, never floating tags.
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # setup-node v7 includes npm OIDC trusted-publishing support. Node 24
+      # ships with a recent npm that supports OIDC.
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Verify tag version and main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/checks-v}"
+          version="$(node -p "require('./package.json').version")"
+          if [[ ! "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag ${GITHUB_REF#refs/tags/} is not checks-v<semver>."
+            exit 1
+          fi
+          if [ "${tag}" != "${version}" ]; then
+            echo "::error::Tag version (${tag}) does not match package.json (${version})."
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag commit ${GITHUB_SHA} is not reachable from origin/main. Only main-reachable tags may publish."
+            exit 1
+          fi
+          echo "Verified @weave-os/checks@${version} is on main."
+
+      - name: Run tests
+        run: npm test
+
+      # Exercise the exact package users will install, like the router's
+      # test-install release gate.
+      - name: Smoke-test packed package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          npm pack --pack-destination "$tmp"
+          tarball="$(find "$tmp" -maxdepth 1 -name '*.tgz' -print -quit)"
+          mkdir "$tmp/consumer"
+          npm install --prefix "$tmp/consumer" "$tarball" --ignore-scripts --no-audit --no-fund
+          (
+            cd "$tmp/consumer"
+            ./node_modules/.bin/weave-checks list --checks-dir node_modules/@weave-os/checks/starter-checks
+            ./node_modules/.bin/weave-checks list --checks-dir node_modules/@weave-os/checks/checks-library
+          )
+
+      - name: Publish with npm OIDC and provenance
+        run: npm publish --provenance --access public

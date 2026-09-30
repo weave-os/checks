@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Weave Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  weave-checks:
+    uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0
+    permissions:
+      id-token: write
+    with:
+      use-default-checks: true
+    secrets:
+      weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}

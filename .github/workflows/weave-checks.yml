@@ -1,0 +1,230 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Weave Checks
+
+# The supported way to run Weave Checks. Call it as a job, pinned to a
+# published version tag such as v1.0:
+#
+#   jobs:
+#     weave-checks:
+#       uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0
+#       permissions:
+#         id-token: write
+#       secrets:
+#         weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
+#
+# Weave issues the Weave Checks App token only to this workflow at an approved
+# commit, identified by the OIDC token's signed job_workflow_ref and
+# job_workflow_sha. The token stays inside this job: it is never an output,
+# and nothing here runs code from the pull request. Inputs are configuration
+# only; none of them chooses the repository or the App's permissions.
+on:
+  workflow_call:
+    inputs:
+      provider:
+        description: "Who serves the agents' requests: weave-router, or anthropic (direct Anthropic or any Anthropic-compatible endpoint)."
+        type: string
+        default: weave-router
+      weave-router-url:
+        description: Weave Router URL. Defaults to the production Router.
+        type: string
+        default: ""
+      checks-dir:
+        description: Directory of check files, relative to the repository root.
+        type: string
+        default: .weave-checks
+      use-default-checks:
+        description: Also run this package's starter checks alongside checks-dir.
+        type: boolean
+        default: false
+      doc-files:
+        description: Comma-separated Markdown files in checks-dir that are documentation, not checks.
+        type: string
+        default: README.md
+      diff-base:
+        description: incremental (review only what changed since the last fully reviewed commit) or merge-base (always review the whole PR).
+        type: string
+        default: incremental
+      product-name:
+        description: Name for one check in agent prompts.
+        type: string
+        default: Weave Check
+      check-run-prefix:
+        description: Prefix of each check run's name.
+        type: string
+        default: Weave Check
+      aggregate-name:
+        description: Name of the aggregate check run.
+        type: string
+        default: Weave Checks
+      marker-prefix:
+        description: Prefix of the hidden marker on every comment.
+        type: string
+        default: weave-check
+      concurrency:
+        description: Checks run at once.
+        type: number
+        default: 16
+      claude-code-version:
+        description: "@anthropic-ai/claude-code version to install. Pin it for reproducible reviews."
+        type: string
+        default: latest
+      fail-on-findings:
+        description: Fail the job when any check flags findings. Check runs themselves are never marked failed.
+        type: boolean
+        default: false
+      upload-diagnostics:
+        description: Upload prompts, transcripts, and results as a workflow artifact. They contain your diff and the agents' full output.
+        type: boolean
+        default: false
+      runs-on:
+        description: Runner label for the job.
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Job timeout.
+        type: number
+        default: 30
+    secrets:
+      weave-router-key:
+        description: Weave Router key (provider weave-router).
+        required: false
+      anthropic-api-key:
+        description: Anthropic API key (provider anthropic).
+        required: false
+      claude-code-oauth-token:
+        description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key.
+        required: false
+      provider-env:
+        description: >-
+          Extra environment for the Claude CLI, one KEY=VALUE per line (provider anthropic), e.g.
+          ANTHROPIC_BASE_URL for a gateway, CLAUDE_CODE_USE_BEDROCK=1, or ANTHROPIC_CUSTOM_HEADERS.
+        required: false
+    outputs:
+      pass:
+        description: Checks that passed.
+        value: ${{ jobs.weave-checks.outputs.pass }}
+      flagged:
+        description: Checks that flagged findings.
+        value: ${{ jobs.weave-checks.outputs.flagged }}
+      neutral:
+        description: Checks that could not reach a verdict.
+        value: ${{ jobs.weave-checks.outputs.neutral }}
+      total-cost:
+        description: Total USD cost, empty when any check's cost is unknown.
+        value: ${{ jobs.weave-checks.outputs.total-cost }}
+
+jobs:
+  weave-checks:
+    name: Weave Checks
+    # Pull requests from forks get no OIDC token, so the job cannot
+    # authenticate for them.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    # Every GitHub call is made as the Weave Checks App; the job's own token
+    # only requests the OIDC token that proves this workflow's identity.
+    permissions:
+      id-token: write
+    concurrency:
+      group: weave-checks-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    outputs:
+      pass: ${{ steps.checks.outputs.pass }}
+      flagged: ${{ steps.checks.outputs.flagged }}
+      neutral: ${{ steps.checks.outputs.neutral }}
+      total-cost: ${{ steps.checks.outputs.total-cost }}
+    steps:
+      # Other events that carry a pull request, like pull_request_target, would
+      # review the base commit instead of the merge, with the base branch's
+      # secrets in reach of pull-request content.
+      - name: Require a pull_request event
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "${EVENT_NAME}" != "pull_request" ]; then
+            echo "::error::Weave Checks runs on pull_request events only, not ${EVENT_NAME}."
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      # A called workflow has no context naming its own commit, and `uses:`
+      # cannot take an expression. The OIDC token's job_workflow_ref and
+      # job_workflow_sha can: they name this workflow's repository and the
+      # exact commit Weave will verify, so the action below always comes from
+      # the same commit as this file. The audience is one Weave's exchange
+      # rejects, so this token is worthless if it leaks.
+      - name: Resolve this workflow's commit
+        id: workflow
+        shell: bash
+        run: |
+          # shellcheck disable=SC2016 # The single-quoted text is JavaScript.
+          node --input-type=module --eval '
+            import { appendFileSync } from "node:fs";
+            const { ACTIONS_ID_TOKEN_REQUEST_URL: requestUrl, ACTIONS_ID_TOKEN_REQUEST_TOKEN: requestToken } = process.env;
+            if (!requestUrl || !requestToken) {
+              console.log("::error::GitHub did not offer this job an OIDC token. Grant `id-token: write` to the calling job.");
+              process.exit(1);
+            }
+            const url = new URL(requestUrl);
+            url.searchParams.set("audience", "weave-checks-workflow-identity");
+            const response = await fetch(url, { headers: { authorization: `bearer ${requestToken}` } });
+            if (!response.ok) {
+              console.log(`::error::OIDC token request failed: HTTP ${response.status}`);
+              process.exit(1);
+            }
+            const { value } = await response.json();
+            const claims = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString("utf8"));
+            const repository = /^([\w.-]+\/[\w.-]+)\/\.github\/workflows\//.exec(claims.job_workflow_ref ?? "")?.[1];
+            const sha = claims.job_workflow_sha ?? "";
+            if (!repository || !/^[0-9a-f]{40}$/.test(sha)) {
+              console.log(`::error::OIDC token names no reusable workflow commit (job_workflow_ref ${JSON.stringify(claims.job_workflow_ref)}).`);
+              process.exit(1);
+            }
+            appendFileSync(process.env.GITHUB_OUTPUT, `repository=${repository}\nsha=${sha}\n`);
+          '
+
+      # Unauthenticated: the repository is public, and the job's own token has
+      # no contents permission to offer. `uses:` needs a path inside the
+      # workspace; the action checks out the PR into a sibling directory, so
+      # this definition remains available for the runner's post steps.
+      - name: Fetch the Weave Checks action
+        shell: bash
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ steps.workflow.outputs.repository }}
+          SHA: ${{ steps.workflow.outputs.sha }}
+          ACTION_DIR: ${{ github.workspace }}/.weave-checks-action
+        run: |
+          rm -rf "${ACTION_DIR}"
+          git init --quiet "${ACTION_DIR}"
+          git -C "${ACTION_DIR}" fetch --quiet --depth 1 --no-tags "${SERVER_URL}/${REPOSITORY}.git" "${SHA}"
+          git -C "${ACTION_DIR}" checkout --quiet --detach FETCH_HEAD
+
+      - name: Run Weave Checks
+        id: checks
+        uses: ./.weave-checks-action
+        with:
+          provider: ${{ inputs.provider }}
+          weave-router-key: ${{ secrets.weave-router-key }}
+          weave-router-url: ${{ inputs.weave-router-url }}
+          anthropic-api-key: ${{ secrets.anthropic-api-key }}
+          claude-code-oauth-token: ${{ secrets.claude-code-oauth-token }}
+          provider-env: ${{ secrets.provider-env }}
+          checks-dir: ${{ inputs.checks-dir }}
+          use-default-checks: ${{ inputs.use-default-checks }}
+          doc-files: ${{ inputs.doc-files }}
+          diff-base: ${{ inputs.diff-base }}
+          product-name: ${{ inputs.product-name }}
+          check-run-prefix: ${{ inputs.check-run-prefix }}
+          aggregate-name: ${{ inputs.aggregate-name }}
+          marker-prefix: ${{ inputs.marker-prefix }}
+          concurrency: ${{ inputs.concurrency }}
+          claude-code-version: ${{ inputs.claude-code-version }}
+          fail-on-findings: ${{ inputs.fail-on-findings }}
+          upload-diagnostics: ${{ inputs.upload-diagnostics }}
