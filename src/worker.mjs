@@ -260,11 +260,9 @@ export async function runWorker(config, deps = {}) {
       { label: `${method} ${apiPath}`, ...transport },
     );
     if (!response.ok) {
-      const error = new Error(
+      throw new Error(
         `${method} ${apiPath}: ${response.status} ${truncateBody(response.text)} (after ${response.attempts} attempt(s))`,
       );
-      error.status = response.status;
-      throw error;
     }
     if (response.text === "") return null;
     try {
@@ -1211,11 +1209,9 @@ export async function runWorker(config, deps = {}) {
             // already happened.
             result = {
               outcome: OUTCOME.NEUTRAL,
-              // A 422 means GitHub rejected this specific review payload, not
-              // that the service is unavailable. Keep an unapplyable result
-              // neutral; auth, network, and server errors remain infrastructure.
-              cause:
-                error.status === 422 ? NEUTRAL_CAUSE.INVALID_OUTPUT : NEUTRAL_CAUSE.INFRASTRUCTURE,
+              // A rejected review POST can mean rate limiting as well as a bad
+              // payload, so every API failure here is infrastructure.
+              cause: NEUTRAL_CAUSE.INFRASTRUCTURE,
               error: `Could not post review: ${error.message}`,
               cost: result.cost,
               duration: result.duration,
@@ -1369,6 +1365,10 @@ export async function runWorker(config, deps = {}) {
       writeResults([]);
       writeFileSync(COMPLETE_PATH, `${RUN_MARKER.NO_REVIEWABLE_CHANGES}\n`);
       return { ok: true, marker: RUN_MARKER.NO_REVIEWABLE_CHANGES };
+    }
+
+    if (CHECKS.length === 0) {
+      throw new Error("No checks are configured to review this non-empty diff.");
     }
 
     states = buildStates();

@@ -331,7 +331,7 @@ export function normalize(invocation, addedLines) {
     return interpreted.outcome === INTERPRET_OUTCOME.RETRYABLE ?
         {
           outcome: OUTCOME.NEUTRAL,
-          cause: interpreted.cause ?? NEUTRAL_CAUSE.INVALID_OUTPUT,
+          cause: interpreted.cause,
           ...interpreted.value,
           retryable: true,
           cost,
@@ -339,7 +339,7 @@ export function normalize(invocation, addedLines) {
         }
       : {
           outcome: OUTCOME.NEUTRAL,
-          cause: interpreted.cause ?? NEUTRAL_CAUSE.INFRASTRUCTURE,
+          cause: interpreted.cause,
           ...interpreted.value,
           cost,
           duration,
