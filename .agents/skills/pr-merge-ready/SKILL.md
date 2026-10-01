@@ -9,8 +9,8 @@ This is the PR merge-ready workflow. It follows the same merge-ready loop (threa
 
 1. **Triage every open thread before editing any file.**
 2. **Apply every Fix in one pass** (group by file; one file is opened/edited once).
-3. **Validate once**, after all edits, scoped to the files you touched — never after each comment.
-4. **One commit, one push** per iteration. Extra pushes cost ~6–7 min of CI each and re-trigger bot reviewers.
+3. **Validate once**, after all edits, with the repository's required formatter and test suite — never after each comment.
+4. **One commit, one push** per iteration. Extra pushes re-run CI and trigger bot reviewers.
 5. **Comments first, CI second.** Never sit in a CI wait while unresolved actionable threads exist.
 
 Do **not** auto-fix decisions that belong to a human. Product/architecture/scope/intent trade-offs are **Escalate** — pause, ask with options grounded in existing patterns, wait. Never guess.
@@ -21,7 +21,7 @@ Do **not** auto-fix decisions that belong to a human. Product/architecture/scope
 
 ## Which reviewers auto-resolve their own threads
 
-Not every reviewer needs a manual `resolveReviewThread` call. Some bots re-scan the pushed commit and close their own thread once the flagged issue is gone; calling `resolveReviewThread` on those threads yourself is redundant, and for weave-checks it's actively wrong — it marks a thread resolved against a code state the bot never re-verified.
+Not every reviewer needs a manual `resolveReviewThread` call. Some bots re-scan the pushed commit and close their own thread once the flagged issue is gone; calling `resolveReviewThread` on those threads yourself is redundant, and for `weave-checks[bot]` it is actively wrong — it marks a thread resolved against a code state the bot never re-verified.
 
 | Reviewer                                                         | Auto-resolves?                              | Action                                                                                                                                              |
 | ---------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -34,7 +34,7 @@ Not every reviewer needs a manual `resolveReviewThread` call. Some bots re-scan 
 
 Identify the author(s) from each `unresolved_comments` entry's `authors` field (or the `<!-- weave-check: -->` marker in `body`) during triage, and carry that classification into the resolve step.
 
-**Reading a weave-checks finding against its own criteria.** The marker's `<slug>` maps to `.weave-checks/<slug>.md` or `starter-checks/<slug>.md`. When triaging a `weave-checks[bot]` thread, read that file — "Do Not Flag"/"Exclusions" is the fastest false-positive check. System context: `README.md`.
+**Reading a Weave Checks finding against its criteria.** The marker's `<slug>` identifies the rule file, typically `.weave-checks/<slug>.md` in a consuming repository or `starter-checks/<slug>.md` in this repository. Read that file, its scope, and any exclusions before deciding whether the finding applies.
 
 **Collapsed threads and mixed authorship:** `pr-fix-plan` collapses same-location threads into one entry with a deduplicated `authors` list and a separately deduplicated `thread_ids` list — the two are **not positionally paired**. Apply the auto-resolving-bot exception only when **every** entry in `authors` is one of the three auto-resolving bots. If mixed, resolve **all** of that entry's `thread_ids` manually.
 
@@ -42,19 +42,19 @@ Identify the author(s) from each `unresolved_comments` entry's `authors` field (
 
 - GitHub CLI authenticated: `gh auth status`
 - `jq` 1.6+ installed
-- Stacked PRs: `gh stack` extension
+- If working with stacked PRs, use the repository's stack-management workflow
 - On the PR branch locally, or provide PR number
 - Use the bundled analyzer at `./.agents/skills/pr-merge-ready/scripts/pr-fix-plan.sh` (also available through `./.claude/skills/pr-merge-ready/scripts/`); do not assume `pr-fix-plan.sh` is installed on `PATH`
-- This repository has `npm run test` configured as `node --test src/*.test.mjs`; run it during Step 4 after formatting
+- Run `npm run test` during Step 4; run `npm run format` before any commit or push
 
 ## Commit workflow
 
 **NEVER `git add -A`.** Stage only files you changed.
 
-1. Lint/format autofix on changed files (included in the one validation pass, Step 4)
+1. Run `npm run format` before committing or pushing (Step 4 for review fixes)
 2. `git add <specific files>`
 3. `git commit -m "message"`
-4. `git push` (in a stack: `gh stack submit --auto --open`)
+4. `git push` (or submit the stack through its usual workflow)
 
 If the branch is out of date: `git push --force-with-lease` only after verifying you don't overwrite someone else's work. Never raw `git push --force`.
 
@@ -62,15 +62,15 @@ If the branch is out of date: `git push --force-with-lease` only after verifying
 
 ```
 0. Identify or create PR; align checkout with the PR's base repository and head SHA
-0b. WEAVE-CHECKS PREFLIGHT: read weave-checks criteria for the files in play
+0b. CHECKS PREFLIGHT: read the applicable `.weave-checks`/`starter-checks` criteria
 1. Fetch fresh state
 2. If DONE → exit
 3. If actionable threads:
    a. TRIAGE ALL threads first (Fix / Decline / Skip / Escalate)
-   b. Surface Escalates in one AskQuestion batch; wait if they block
+   b. Surface Escalates together in one batch of questions; wait if they block
    c. APPLY ALL Fixes in one pass (group by file)
    d. Resolve all Declines (and decided Escalates) silently
-   e. Validate ONCE, scoped to touched files (Step 4) + re-run weave checks
+   e. Validate ONCE after all edits (Step 4)
    f. One commit + one push
    g. Go to step 1 — do NOT wait for CI yet
 4. Else (zero actionable threads):
@@ -114,7 +114,7 @@ gh pr view "${PR_NUMBER:-}" --repo "$OWNER/$REPO" \
 
 If the base repository cannot be resolved from the checkout, use the base repository explicitly; never substitute the fork's head repository.
 
-For a mid-stack PR (`gh stack view --short`), run `gh stack checkout <headRefName>` when needed, then verify `git rev-parse HEAD` equals the PR's `headRefOid`. For a non-stack PR, use the PR number and base repository so GitHub CLI can select the correct fork ref; do not check out by branch name alone:
+For a mid-stack PR, use the repository's stack workflow to check out the PR head, then verify `git rev-parse HEAD` equals the PR's `headRefOid`. For a non-stack PR, use the PR number and base repository so GitHub CLI can select the correct fork ref; do not check out by branch name alone:
 
 ```bash
 # Stop rather than switching away from uncommitted work.
@@ -125,9 +125,9 @@ test "$(git rev-parse HEAD)" = "$HEAD_SHA" || { echo "PR head SHA mismatch" >&2;
 
 If that unique local branch already exists at a different commit, choose another unused local name rather than resetting it. Before editing or pushing, verify the local branch tracks the PR head ref from `head_owner/head_repo`. If the checkout or upstream cannot be verified safely, stop and ask. Fixes always go on the PR's own head branch.
 
-### Step 0b: Weave-checks preflight (once, before any triage or edit)
+### Step 0b: Check-criteria preflight (once, before any triage or edit)
 
-Read the `.weave-checks/*.md`/`starter-checks/*.md` criteria that apply to the files this PR touches.
+Read the applicable rules before triage: custom checks in the PR's `.weave-checks/` directory and, for this repository's default checks, relevant files in `starter-checks/`. Review each rule's scope and any exclusions to assess whether a finding is actionable.
 
 ### Step 1: Fetch fresh PR state (every iteration)
 
@@ -214,42 +214,37 @@ Never change code or resolve on your own.
 
 1. Investigate first (referenced file/line, surrounding code, how similar cases are handled).
 2. Frame each thread: reviewer ask + link; why it needs a human; 2–4 options grounded in existing patterns with trade-offs; your recommendation.
-3. Present **all** escalations in one `AskQuestion` batch.
+3. Present **all** escalations together with `AskUserQuestion`.
 4. If the user has not responded and the only remaining work is escalations, **stop the loop** — do not spin or sit in CI wait. Resume from Step 1 when they answer.
 5. Once they choose, treat the chosen option as a Fix (fold into the current pass if you haven't validated yet; otherwise a new iteration). Resolve silently. If they defer, leave unresolved — the PR is blocked on it.
 
 Do not auto-resolve an escalated thread. Do not let it slip through as a Fix because asking felt slower.
 
-### Step 4: Validate ONCE, scoped to what you touched
+### Step 4: Validate ONCE after all fixes
 
 Run this **after every Fix in this iteration is applied**, and **never per comment**. Skip the whole step if this iteration was all-Decline (no files changed).
 
-Scope to **this iteration's uncommitted edits**.
+Run the repository's formatter and tests once after the batch of fixes. Inspect the diff after formatting. Because `npm run format` may rewrite files repository-wide, restore unrelated formatting-only changes outside this iteration's fix set before staging; do not discard intended changes.
+
+#### Format before validation
 
 ```bash
-CHANGED_FILES=()
-while IFS= read -r -d '' file; do
-  [[ -f $file ]] && CHANGED_FILES+=("$file")
-done < <({
-  git diff --name-only -z
-  git diff --cached --name-only -z
-  git ls-files --others --exclude-standard -z
-})
-```
-
-#### Autofix first (so lint lands in the same commit)
-
-Format only existing paths from this iteration's `CHANGED_FILES`; do not run a repository-wide write formatter here.
-
-```bash
-if ((${#CHANGED_FILES[@]})); then
-  npx prettier --write --ignore-unknown -- "${CHANGED_FILES[@]}"
-fi
+npm run format
 ```
 
 #### Then run tests
 
 - `npm run test`
+
+#### Re-run fixed Weave Checks findings
+
+When this iteration fixes one or more Weave Checks findings, run only those checks against the updated diff before committing or pushing. Use the check directory identified in Step 0b, the slug or comma-separated slugs from the findings' `<!-- weave-check:<slug> -->` markers, and the PR's base ref:
+
+```bash
+npx @weave-os/checks run --checks-dir .weave-checks --only <slug[,slug...]> --base origin/main
+```
+
+Replace `.weave-checks`, the slug placeholder, and `origin/main` with the applicable check directory, finding slug(s), and PR base ref (for example, use `starter-checks` for this repository's default checks). Do not push while the targeted check still reports the finding.
 
 ### Step 5: One commit, one push, then resolve
 
@@ -281,12 +276,12 @@ Fixed:
 
 Declined (with explanation):
 - [summary of declined 1]"
-git push   # stack: gh stack submit --auto --open
+git push   # or submit with the repository's stack workflow
 PUSHED_HEAD_SHA=$(git rev-parse HEAD)
 # now resolve human/Greptile Fix thread_ids (Declines already resolved above)
 ```
 
-If push is rejected as out of date: `gh stack sync` (or `git fetch origin && git rebase origin/main`) then `git push --force-with-lease`. Never raw `--force`. Do not resolve Fix threads until the push succeeds.
+If push is rejected as out of date, fetch and rebase onto the current base branch or sync the stack using its usual workflow, then push with `--force-with-lease`. Never raw `--force`. Do not resolve Fix threads until the push succeeds.
 
 **After push:** enter the Step 6 watcher. Do not run an in-band `pr-fix-plan`. Auto-reviewers file new threads on the new commit asynchronously — "zero threads right before push" is meaningless for the new SHA.
 
@@ -300,12 +295,12 @@ A naive `gh pr checks` right after push reports `pending=0` because GitHub has n
 
 #### Cheap sentinel + full fetch-on-fire
 
-Do not run `pr-fix-plan` every 15s (~2s/call). Poll a cheap GraphQL sentinel; full `pr-fix-plan` only when something changed.
+Do not run `pr-fix-plan` on every 15s sentinel tick. Poll the cheap GraphQL sentinel, and run the full fetch only when something changes or periodically for CI status.
 
-- **Sentinel** every 15–30s (~0.3s): unresolved count + `updatedAt` of the most recent review. Tune toward 15s in the first 2 min after push (bots are most active); 30s later.
+- **Sentinel** every 15–30s: unresolved count + `updatedAt` of the most recent review. Tune toward 15s in the first 2 min after push (bots are most active); 30s later.
 - **Full fetch** when the sentinel fires, or every ~2 min for CI status.
 
-This pins the session. That is the point: responsiveness.
+Keep the watcher in the foreground so new review activity is noticed promptly.
 
 #### Sentinel query
 
@@ -385,7 +380,7 @@ loop:
     ./.agents/skills/pr-merge-ready/scripts/pr-fix-plan.sh "$PR_NUMBER" --owner "$OWNER" --repo "$REPO" --max-comments 0 --json
     also run the bounded bot-thread fallback against the skip ledger (force-resolve if ≥2 polls AND ≥5 min)
     if checks_summary.failed > 0:
-      # Do not wait for the rest of the matrix. Pull logs, fix, push.
+      # Do not wait for remaining checks. Pull logs, fix, push.
       break → Step 1 with failing checks as extra Fix items
     if checks all concluded and pending == 0:
       fetch reviewer state; if DONE (skip-ledger threads only after bot close or post-window force-resolve) → Step 7
@@ -394,14 +389,14 @@ loop:
   if elapsed_watch_minutes > 45: surface to user, stop
 ```
 
-Use Bash `Monitor` or a `while`/`sleep` loop — foreground, not scheduled wake-ups. If you genuinely must yield (`/loop` pacing, user asked to unpin, wait outlives 45 min), follow "If you must yield" — never schedule a wake-up whose prompt re-invokes `/pr-merge-ready`.
+Use a foreground `while`/`sleep` loop. If you genuinely must pause or yield, provide a concise state-carrying resume prompt rather than restarting the workflow from scratch.
 
 #### If you must yield: state-carrying resume prompt (never `/pr-merge-ready`)
 
-Re-invoking the skill re-injects this whole file on every wake-up. The skill is already in context; a wake-up only needs loop state.
+If a fresh agent/session resumes the work, provide the current loop state and next action instead of restarting PR discovery.
 
 ```
-Resume the pr-merge-ready loop. The skill is already in context — do NOT re-invoke /pr-merge-ready.
+Resume the pr-merge-ready loop from this state; do not restart PR setup unless the state is unavailable.
 PR #<num> <owner>/<repo>, branch <headRefName>, head SHA <sha>
 Phase: <ci-wait | fixing threads | blocked-on-escalation> · Iteration <n>/5
 Sentinel baseline (captured unresolved / captured total): <n> / <m>
@@ -440,42 +435,39 @@ If after **5 full iterations** (5 push cycles) the loop hasn't terminated, stop 
 
 ## Anti-patterns
 
-| Anti-pattern                                                                  | Why it bit us                                                                                                                  | Instead                                                                     |
-| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| Re-running the full check suite on every fix iteration                        | ~55s and 17 model calls against a few changed lines, and no cross-run memory locally so it re-flags what CI already suppressed | Full suite once at Step 0b; `--check <slug>` while iterating on one finding |
-| Fix comment 1 → validate → commit → fix comment 2 → validate…                 | Multiplies local typecheck/test cost by N comments; N CI cycles (~6–7 min each) and N bot re-reviews                           | Triage all → edit all → validate once → one push                            |
-| Scoping `$CHANGED_FILES` to `origin/main...HEAD`                              | Pays lint/typecheck/tests for the whole PR on a one-line review fix                                                            | Uncommitted `git diff` + cached + untracked                                 |
-| Resolving Fix threads, then a push that fails                                 | Threads closed against code that never landed                                                                                  | Push first, resolve human/Greptile Fixes after                              |
-| Waiting out the full CI matrix after the first red check                      | Burns 5–10 min for jobs that cannot save a failed run                                                                          | Abort CI wait on `failed > 0`, fix, re-push                                 |
-| Invoking full `pre-commit-validation` from this skill                         | That skill is for shipping a feature; it runs the whole component matrix                                                       | Step 4 scoped table                                                         |
-| Falling through to another PR review workflow                                 | This skill is the full workflow and validates once per batch                                                                   | This file is the full workflow                                              |
-| Waiting for CI before fixing review comments                                  | Reviewers blocked while the agent watches checks                                                                               | Comments first                                                              |
-| Sitting in CI wait without polling for new threads                            | Auto-reviewers post during CI                                                                                                  | Sentinel every 15–30s                                                       |
-| Polling CI immediately after push                                             | `pending=0` before dispatch → false DONE                                                                                       | Anchor on `commits/$HEAD_SHA/check-runs` count                              |
-| Treating "0 threads at push time" as forever                                  | Bots post minutes later                                                                                                        | Sentinel + re-fetch after CI                                                |
-| Conflating PRs in a stack                                                     | Comments on PR #2 fixed on PR #1's branch                                                                                      | Verify base repo, head repo, and checked-out head SHA each iteration        |
-| Auto-fixing a product/architecture/scope decision                             | Shipped an opinionated change the author didn't want                                                                           | Escalate                                                                    |
-| Asking with no research or options                                            | Forces the human to do the legwork                                                                                             | Investigate, then 2–4 grounded options + recommendation                     |
-| Running `pr-fix-plan` on every sentinel tick                                  | Wastes ~2s/tick                                                                                                                | Cheap GraphQL sentinel; full fetch on fire or ~2 min                        |
-| Passing `/pr-merge-ready` as the `ScheduleWakeup` prompt                      | Re-injects the whole skill per wake-up                                                                                         | ~1KB state-carrying resume prompt                                           |
-| Manually resolving a Cursor/Cubic/weave-checks Fix right after push           | weave-checks re-files the same nit                                                                                             | Skip resolve; let the bot re-scan                                           |
-| Skipping resolve on a Decline just because the bot auto-resolves Fixes        | Nothing new to re-scan → thread sits open                                                                                      | Always resolve Declines yourself                                            |
-| Applying the bot exception to a collapsed entry that mixes a bot with a human | `authors` and `thread_ids` aren't paired — you'd strand the human thread                                                       | Only skip when `authors` is entirely auto-resolving bots                    |
-| Declaring merge-ready while a skipped bot thread is still open                | Bot never re-scanned                                                                                                           | Wait the 2-poll / 5 min window; only then force-resolve and count DONE      |
-| Sentinel `comments(first: 1)`                                                 | Replies on an open thread never bump counts; oldest timestamp stays put                                                        | `comments(last: 1)` + compare `latest_thread_timestamp`                     |
+| Anti-pattern                                                                  | Why it bit us                                                                                     | Instead                                                                |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Running validation after each individual fix                                  | Repeats formatter/test work for a batch of review fixes                                           | Apply all fixes, then validate once in Step 4                          |
+| Fix comment 1 → validate → commit → fix comment 2 → validate…                 | Repeats formatting, tests, CI, and bot review for each comment instead of handling the batch once | Triage all → edit all → validate once → one push                       |
+| Resolving Fix threads, then a push that fails                                 | Threads closed against code that never landed                                                     | Push first, resolve human/Greptile Fixes after                         |
+| Waiting for all checks after the first red result                             | Delays action while unrelated checks continue                                                     | Investigate the failing check, fix it, and push a new iteration        |
+| Falling through to another PR review workflow                                 | This skill is the full workflow and validates once per batch                                      | This file is the full workflow                                         |
+| Waiting for CI before fixing review comments                                  | Reviewers blocked while the agent watches checks                                                  | Comments first                                                         |
+| Sitting in CI wait without polling for new threads                            | Auto-reviewers post during CI                                                                     | Sentinel every 15–30s                                                  |
+| Polling CI immediately after push                                             | `pending=0` before dispatch → false DONE                                                          | Anchor on `commits/$HEAD_SHA/check-runs` count                         |
+| Treating "0 threads at push time" as forever                                  | Bots post minutes later                                                                           | Sentinel + re-fetch after CI                                           |
+| Conflating PRs in a stack                                                     | Comments on PR #2 fixed on PR #1's branch                                                         | Verify base repo, head repo, and checked-out head SHA each iteration   |
+| Auto-fixing a product/architecture/scope decision                             | Shipped an opinionated change the author didn't want                                              | Escalate                                                               |
+| Asking with no research or options                                            | Forces the human to do the legwork                                                                | Investigate, then 2–4 grounded options + recommendation                |
+| Running `pr-fix-plan` on every sentinel tick                                  | Repeats full PR fetches unnecessarily                                                             | Cheap GraphQL sentinel; full fetch on fire or periodically             |
+| Passing `/pr-merge-ready` as the scheduled resume prompt                      | Repeats PR setup on every wake-up                                                                 | Resume with a concise state-carrying prompt                            |
+| Manually resolving an auto-resolving bot Fix right after push                 | The bot may not have re-scanned the pushed change yet                                             | Skip resolve; let the bot re-scan                                      |
+| Skipping resolve on a Decline just because the bot auto-resolves Fixes        | Nothing new to re-scan → thread sits open                                                         | Always resolve Declines yourself                                       |
+| Applying the bot exception to a collapsed entry that mixes a bot with a human | `authors` and `thread_ids` aren't paired — you'd strand the human thread                          | Only skip when `authors` is entirely auto-resolving bots               |
+| Declaring merge-ready while a skipped bot thread is still open                | Bot never re-scanned                                                                              | Wait the 2-poll / 5 min window; only then force-resolve and count DONE |
+| Sentinel `comments(first: 1)`                                                 | Replies on an open thread never bump counts; oldest timestamp stays put                           | `comments(last: 1)` + compare `latest_thread_timestamp`                |
 
 ## Error handling
 
-| Issue                                                             | Solution                                                                       |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Comment references deleted line                                   | Check git history, apply to current location                                   |
-| File was renamed                                                  | Find new path, apply there                                                     |
-| Conflicting comments                                              | Address most recent; note the conflict in chat                                 |
-| Fix breaks scoped tests                                           | Revert that fix, try an alternative; don't re-run the whole suite              |
-| CI check stuck `IN_PROGRESS` >30min                               | Surface to user, stop the watcher                                              |
-| Reviewer keeps re-requesting the same point                       | After 2 declines on the same thread, surface to user                           |
-| Push rejected (rebase / merged dependency)                        | `gh stack sync` or rebase onto `origin/main` → `--force-with-lease`            |
-| `git fetch` errors with `not our ref` on `router-internal/router` | `--no-recurse-submodules`, or `git submodule deinit -f router-internal/router` |
+| Issue                                       | Solution                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Comment references deleted line             | Check git history, apply to current location                                               |
+| File was renamed                            | Find new path, apply there                                                                 |
+| Conflicting comments                        | Address most recent; note the conflict in chat                                             |
+| Fix breaks tests                            | Revert or correct the fix, then rerun `npm run test`                                       |
+| CI check stuck `IN_PROGRESS` >30min         | Surface to user, stop the watcher                                                          |
+| Reviewer keeps re-requesting the same point | After 2 declines on the same thread, surface to user                                       |
+| Push rejected (rebase / merged dependency)  | Rebase onto the current base branch or sync the stack, then push with `--force-with-lease` |
 
 ## Notes
 
