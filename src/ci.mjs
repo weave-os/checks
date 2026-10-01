@@ -3,7 +3,7 @@
 //
 // Each is a small function over an injected REST client so the contract the
 // action relies on -- creation before checkout, a cleanup that never
-// overwrites the worker's own close, and failure on incomplete reviews -- is
+// overwrites the worker's own close, and failure on infrastructure errors -- is
 // unit tested (ci.test.mjs).
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -34,9 +34,10 @@ export async function createAggregate({ rest, repository, headSha, aggregateName
 // When the worker reached its own close (success or its top-level catch), it
 // wrote `completePath` and this is a no-op, so the worker's specific message
 // is never overwritten with this generic one. Otherwise -- a crash in
-// checkout, preparation, discovery, or before the worker could PATCH --
-// close it as failure so branch protection cannot accept a run that never
-// produced a review. Findings remain neutral; only incomplete reviews fail.
+// checkout, preparation, or before the worker could PATCH because of an
+// infrastructure/setup failure -- close it as failure so branch protection
+// cannot accept a run that never reached the coordinator. Findings and
+// unusable model output remain neutral when the worker finishes normally.
 export async function closeAggregate({
   rest,
   repository,

@@ -30,6 +30,7 @@ import process from "node:process";
 import {
   CLI_RESULT_SUBTYPE,
   INTERPRET_OUTCOME,
+  NEUTRAL_CAUSE,
   OUTCOME,
   VERDICT,
   interpretResult,
@@ -294,6 +295,7 @@ export function normalize(invocation, addedLines) {
     // failed invocation as free.
     return {
       outcome: OUTCOME.NEUTRAL,
+      cause: NEUTRAL_CAUSE.INFRASTRUCTURE,
       error: exitError(invocation),
       cost: invocationCost(invocation),
       duration: invocationDuration(invocation),
@@ -306,6 +308,7 @@ export function normalize(invocation, addedLines) {
   if (invocation.cli === null) {
     return {
       outcome: OUTCOME.NEUTRAL,
+      cause: NEUTRAL_CAUSE.INFRASTRUCTURE,
       error: "Claude stream-json output had no terminal result event",
       cost: invocationCost(invocation),
       duration: null,
@@ -328,12 +331,19 @@ export function normalize(invocation, addedLines) {
     return interpreted.outcome === INTERPRET_OUTCOME.RETRYABLE ?
         {
           outcome: OUTCOME.NEUTRAL,
+          cause: interpreted.cause,
           ...interpreted.value,
           retryable: true,
           cost,
           duration,
         }
-      : { outcome: OUTCOME.NEUTRAL, ...interpreted.value, cost, duration };
+      : {
+          outcome: OUTCOME.NEUTRAL,
+          cause: interpreted.cause,
+          ...interpreted.value,
+          cost,
+          duration,
+        };
   }
   // The structured_output route (the common case once the model cooperates)
   // needs the full result validated against the diff. interpretResult already
@@ -361,6 +371,7 @@ export function validateAndFinalize(resultObject, invocation, cli, addedLines) {
     // neutral run from a parse-time miss doesn't look free.
     return {
       outcome: OUTCOME.NEUTRAL,
+      cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
       error: `Invalid structured result: ${error.message}`,
       cost,
       duration,
@@ -370,6 +381,7 @@ export function validateAndFinalize(resultObject, invocation, cli, addedLines) {
   if (validated.verdict === VERDICT.FAIL && validated.accepted.length === 0) {
     return {
       outcome: OUTCOME.NEUTRAL,
+      cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
       error: "FAIL had no valid anchored findings after diff validation.",
       proseFallbacks: validated.proseFallbacks,
       rejected: validated.rejected,

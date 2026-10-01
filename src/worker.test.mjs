@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { OUTCOME, RESULT_SCHEMA, checkSetDigest, formatReviewedMarker } from "./parse.mjs";
+import {
+  NEUTRAL_CAUSE,
+  OUTCOME,
+  RESULT_SCHEMA,
+  checkSetDigest,
+  formatReviewedMarker,
+} from "./parse.mjs";
 import { appendMarker } from "./history.mjs";
 import { readWorkerConfig, runWorker } from "./worker.mjs";
 
@@ -108,6 +114,7 @@ function fakeGitHub({
   failMaster = false,
   failThreads = false,
   failResolve = false,
+  reviewStatus = null,
   liveHead = HEAD_SHA,
 } = {}) {
   const calls = [];
@@ -135,6 +142,9 @@ function fakeGitHub({
         });
       }
       return reply(200, { data: {} });
+    }
+    if (method === "POST" && route === `repos/${REPO}/pulls/7/reviews` && reviewStatus !== null) {
+      return reply(reviewStatus, { message: "review validation failed" });
     }
     if (method === "POST" && route === `repos/${REPO}/check-runs`) {
       nextId += 1;
@@ -321,7 +331,7 @@ describe("runWorker", () => {
     const { env } = workerEnv();
     const github = fakeGitHub();
 
-    await run(env, github, async ({ check }) =>
+    const outcome = await run(env, github, async ({ check }) =>
       check.slug === "first-check" ?
         { outcome: OUTCOME.NEUTRAL, error: "Claude CLI exited 1", cost: null, duration: null }
       : pass(),
@@ -330,6 +340,81 @@ describe("runWorker", () => {
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "failure");
     assert.equal(final.external_id, undefined);
+    assert.equal(
+      outcome.states.find(state => state.check.slug === "first-check").cause,
+      NEUTRAL_CAUSE.INFRASTRUCTURE,
+    );
+    const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
+    assert.equal(
+      results.checks.find(check => check.slug === "first-check").cause,
+      "infrastructure",
+    );
+  });
+
+  it("keeps invalid model output neutral without marking the head reviewed", async () => {
+    const { env } = workerEnv();
+    const github = fakeGitHub();
+
+    const outcome = await run(env, github, async ({ check }) =>
+      check.slug === "first-check" ?
+        {
+          outcome: OUTCOME.NEUTRAL,
+          cause: NEUTRAL_CAUSE.INVALID_OUTPUT,
+          error: "Invalid structured result: missing verdict",
+          cost: 0.01,
+          duration: 100,
+        }
+      : pass(),
+    );
+
+    const final = github.masterPatches().at(-1).body;
+    assert.equal(final.conclusion, "neutral");
+    assert.equal(final.external_id, undefined);
+    assert.equal(
+      outcome.states.find(state => state.check.slug === "first-check").cause,
+      NEUTRAL_CAUSE.INVALID_OUTPUT,
+    );
+    const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
+    assert.equal(
+      results.checks.find(check => check.slug === "first-check").cause,
+      "invalid_output",
+    );
+  });
+
+  it("fails the aggregate when GitHub rejects a review POST", async () => {
+    const { env } = workerEnv();
+    const github = fakeGitHub({ reviewStatus: 422 });
+
+    const outcome = await run(env, github, async ({ check }) =>
+      check.slug === "first-check" ? fail() : pass(),
+    );
+
+    const final = github.masterPatches().at(-1).body;
+    assert.equal(final.conclusion, "failure");
+    assert.equal(final.external_id, undefined);
+    assert.equal(
+      outcome.states.find(state => state.check.slug === "first-check").cause,
+      NEUTRAL_CAUSE.INFRASTRUCTURE,
+    );
+  });
+
+  it("fails the aggregate when a non-empty diff has no configured checks", async () => {
+    const { env, root } = workerEnv();
+    const emptyMatrixPath = path.join(root, "empty-matrix.json");
+    writeFileSync(emptyMatrixPath, JSON.stringify({ check: [] }));
+    env.MATRIX_PATH = emptyMatrixPath;
+    const github = fakeGitHub();
+
+    const workerResult = await run(env, github, async () => {
+      throw new Error("no checks should run");
+    });
+
+    const finalCheckRun = github.masterPatches().at(-1).body;
+    assert.equal(workerResult.ok, false);
+    assert.equal(finalCheckRun.conclusion, "failure");
+    assert.equal(finalCheckRun.external_id, undefined);
+    assert.match(finalCheckRun.output.summary, /No checks are configured/);
+    assert.equal(github.childRuns().length, 0);
   });
 
   it("fails the aggregate without running checks when review history is unavailable", async () => {
