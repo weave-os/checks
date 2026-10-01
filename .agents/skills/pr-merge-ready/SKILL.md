@@ -224,7 +224,7 @@ Do not auto-resolve an escalated thread. Do not let it slip through as a Fix bec
 
 Run this **after every Fix in this iteration is applied**, and **never per comment**. Skip the whole step if this iteration was all-Decline (no files changed).
 
-Run the repository's formatter and tests once after the batch of fixes. Inspect the diff after formatting to catch any unrelated changes.
+Run the repository's formatter and tests once after the batch of fixes. Inspect the diff after formatting. Because `npm run format` may rewrite files repository-wide, restore unrelated formatting-only changes outside this iteration's fix set before staging; do not discard intended changes.
 
 #### Format before validation
 
@@ -235,6 +235,16 @@ npm run format
 #### Then run tests
 
 - `npm run test`
+
+#### Re-run fixed Weave Checks findings
+
+When this iteration fixes one or more Weave Checks findings, run only those checks against the updated diff before committing or pushing. Use the check directory identified in Step 0b, the slug or comma-separated slugs from the findings' `<!-- weave-check:<slug> -->` markers, and the PR's base ref:
+
+```bash
+npx @weave-os/checks run --checks-dir .weave-checks --only <slug[,slug...]> --base origin/main
+```
+
+Replace `.weave-checks`, the slug placeholder, and `origin/main` with the applicable check directory, finding slug(s), and PR base ref (for example, use `starter-checks` for this repository's default checks). Do not push while the targeted check still reports the finding.
 
 ### Step 5: One commit, one push, then resolve
 
