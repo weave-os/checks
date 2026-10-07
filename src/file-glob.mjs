@@ -96,10 +96,12 @@ function decodeGitQuotedPath(value) {
   return decoded;
 }
 
-function pathFromHeader(line, prefix) {
+function pathFromHeader(line, prefix, stripDiffPrefix = false) {
   const decoded = decodeGitQuotedPath(line.trimEnd().slice(prefix.length));
   if (decoded === "/dev/null") return null;
-  return decoded.startsWith("a/") || decoded.startsWith("b/") ? decoded.slice(2) : decoded;
+  return stripDiffPrefix && (decoded.startsWith("a/") || decoded.startsWith("b/")) ?
+      decoded.slice(2)
+    : decoded;
 }
 
 function pathsFromDiffHeader(line) {
@@ -127,17 +129,22 @@ function pathsFromDiffHeader(line) {
 function diffSections(diff) {
   const sections = [];
   let current = null;
+  let inHunk = false;
   for (const line of diff.split(/(?<=\n)/)) {
     if (line.startsWith("diff --git ")) {
       if (current !== null) sections.push(current);
       const [oldPath, newPath] = pathsFromDiffHeader(line.trimEnd());
       current = { lines: [line], oldPath, newPath };
+      inHunk = false;
     } else if (current !== null) {
       current.lines.push(line);
-      if (line.startsWith("rename from ")) current.oldPath = pathFromHeader(line, "rename from ");
-      if (line.startsWith("rename to ")) current.newPath = pathFromHeader(line, "rename to ");
-      if (line.startsWith("--- ")) current.oldPath = pathFromHeader(line, "--- ");
-      if (line.startsWith("+++ ")) current.newPath = pathFromHeader(line, "+++ ");
+      if (!inHunk) {
+        if (line.startsWith("rename from ")) current.oldPath = pathFromHeader(line, "rename from ");
+        if (line.startsWith("rename to ")) current.newPath = pathFromHeader(line, "rename to ");
+        if (line.startsWith("--- ")) current.oldPath = pathFromHeader(line, "--- ", true);
+        if (line.startsWith("+++ ")) current.newPath = pathFromHeader(line, "+++ ", true);
+      }
+      if (line.startsWith("@@")) inHunk = true;
     }
   }
   if (current !== null) sections.push(current);

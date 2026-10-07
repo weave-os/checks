@@ -50,8 +50,18 @@ describe("file globs", () => {
     assert.equal(filterDiffByGlob(rename, "frontend/**").diff, rename);
     assert.equal(filterDiffByGlob(rename, "backend/**").diff, rename);
 
+    const sameDirectoryRename = `diff --git a/a/old.ts b/a/new.ts\nsimilarity index 100%\nrename from a/old.ts\nrename to a/new.ts\n`;
+    assert.equal(filterDiffByGlob(sameDirectoryRename, "a/**").diff, sameDirectoryRename);
+    assert.equal(filterDiffByGlob(sameDirectoryRename, "old/**").diff, "");
+
     const deletion = `diff --git a/frontend/gone.ts b/frontend/gone.ts\n--- a/frontend/gone.ts\n+++ /dev/null\n`;
     assert.equal(filterDiffByGlob(deletion, "frontend/**").diff, deletion);
+  });
+
+  it("does not treat diff-header-like hunk content as file metadata", () => {
+    const diff = `diff --git a/backend/source.js b/backend/source.js\n--- a/backend/source.js\n+++ b/backend/source.js\n@@ -0,0 +1 @@\n+++ b/frontend/fake.js\n`;
+    assert.equal(filterDiffByGlob(diff, "frontend/**").diff, "");
+    assert.equal(filterDiffByGlob(diff, "backend/**").diff, diff);
   });
 
   it("handles binary diffs and filenames containing spaces", () => {

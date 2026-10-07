@@ -293,7 +293,7 @@ describe("runWorker file-glob scoping", () => {
       },
     };
     const github = fakeGitHub({ threads: [thread] });
-    const judged = [];
+    const judgeInvocations = [];
 
     await run(
       env,
@@ -303,7 +303,7 @@ describe("runWorker file-glob scoping", () => {
       },
       {
         runAgent: async options => {
-          judged.push({ suffix: options.suffix, prompt: options.promptText });
+          judgeInvocations.push({ suffix: options.suffix, prompt: options.promptText });
           return {
             code: 0,
             sessionId: "judge-session",
@@ -326,10 +326,10 @@ describe("runWorker file-glob scoping", () => {
     );
 
     assert.deepEqual(
-      judged.map(({ suffix }) => suffix),
+      judgeInvocations.map(({ suffix }) => suffix),
       ["resolve"],
     );
-    assert.match(judged[0].prompt, /\[id=T-open\]/);
+    assert.match(judgeInvocations[0].prompt, /\[id=T-open\]/);
     assert.equal(github.childRuns().length, 1);
     assert.ok(
       github.calls.some(
