@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import {
-  diffFilePaths,
-  filterDiffByGlob,
-  matchesFileGlob,
-  validateFileGlob,
-} from "./file-glob.mjs";
+import { filterDiffByGlob, matchesFileGlob, validateFileGlob } from "./file-glob.mjs";
 
 const DIFF = `diff --git a/frontend/App.jsx b/frontend/App.jsx
 index 1111111..2222222 100644
@@ -41,8 +36,7 @@ describe("file globs", () => {
     }
   });
 
-  it("extracts changed files and limits diff and stat to matches", () => {
-    assert.deepEqual(diffFilePaths(DIFF), ["frontend/App.jsx", "backend/api.js"]);
+  it("limits diff and stat to matches", () => {
     const scoped = filterDiffByGlob(DIFF, "frontend/**");
     assert.match(scoped.diff, /frontend\/App\.jsx/);
     assert.doesNotMatch(scoped.diff, /backend\/api\.js/);
@@ -53,21 +47,18 @@ describe("file globs", () => {
 
   it("matches renamed and deleted paths", () => {
     const rename = `diff --git a/backend/old.ts b/frontend/new.ts\nsimilarity index 100%\nrename from backend/old.ts\nrename to frontend/new.ts\n`;
-    assert.deepEqual(diffFilePaths(rename), ["frontend/new.ts"]);
     assert.equal(filterDiffByGlob(rename, "frontend/**").diff, rename);
     assert.equal(filterDiffByGlob(rename, "backend/**").diff, rename);
 
     const deletion = `diff --git a/frontend/gone.ts b/frontend/gone.ts\n--- a/frontend/gone.ts\n+++ /dev/null\n`;
-    assert.deepEqual(diffFilePaths(deletion), ["frontend/gone.ts"]);
     assert.equal(filterDiffByGlob(deletion, "frontend/**").diff, deletion);
   });
 
   it("handles binary diffs and filenames containing spaces", () => {
     const binary = `diff --git a/frontend/brand image.png b/frontend/brand image.png\nBinary files a/frontend/brand image.png and b/frontend/brand image.png differ\n`;
-    assert.deepEqual(diffFilePaths(binary), ["frontend/brand image.png"]);
     assert.equal(filterDiffByGlob(binary, "frontend/**").diff, binary);
 
     const quoted = `diff --git "a/frontend/brand image.png" "b/frontend/brand image.png"\nBinary files a/frontend/brand image.png and b/frontend/brand image.png differ\n`;
-    assert.deepEqual(diffFilePaths(quoted), ["frontend/brand image.png"]);
+    assert.equal(filterDiffByGlob(quoted, "frontend/**").diff, quoted);
   });
 });

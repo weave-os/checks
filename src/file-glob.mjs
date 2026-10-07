@@ -144,12 +144,6 @@ function diffSections(diff) {
   return sections;
 }
 
-export function diffFilePaths(diff) {
-  return diffSections(diff)
-    .map(section => section.newPath ?? section.oldPath)
-    .filter(Boolean);
-}
-
 function statForSection(section, filePath) {
   let additions = 0;
   let deletions = 0;
