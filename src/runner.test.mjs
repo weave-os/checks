@@ -739,20 +739,33 @@ describe("evaluateCheck", () => {
     assert.equal(result.duration, 2600);
   });
 
-  it("does not retry a verdict that came back cleanly", async () => {
+  it("scopes filtered checks to matching diff files and disables repository tools", async () => {
     const space = workspace();
-    space.stream(
-      successEvents({
-        verdict: VERDICT.FAIL,
-        reason: "line one is bad",
-        suggestions: [{ file: "app/main.go", line: 1, comment: "rename this" }],
-      }),
-    );
+    space.stream(successEvents({ verdict: VERDICT.PASS, reason: "scoped review" }));
+    const backendDiff = [
+      DIFF.trimEnd(),
+      "diff --git a/backend/api.go b/backend/api.go",
+      "--- a/backend/api.go",
+      "+++ b/backend/api.go",
+      "@@ -0,0 +1 @@",
+      "+secret backend change",
+      "",
+    ].join("\n");
 
-    const result = await evaluate(space);
+    await evaluate(space, {
+      check: { ...CHECK, files: "app/**" },
+      diff: backendDiff,
+      stat: "app/main.go | 2 ++\\nbackend/api.go | 1 +",
+    });
 
-    assert.equal(result.outcome, OUTCOME.FAIL);
-    assert.equal(space.callCount(), 1);
+    assert.match(space.stdin(), /app\/main\.go/);
+    assert.doesNotMatch(space.stdin(), /backend\/api\.go|secret backend change/);
+    assert.match(space.stdin(), /app\/main\.go \| 2 \+\+/);
+    const argv = space.argv();
+    assert.ok(argv.includes("--tools"));
+    assert.equal(argv[argv.indexOf("--tools") + 1], "");
+    assert.ok(argv.includes("--strict-mcp-config"));
+    assert.ok(!argv.includes("--allowedTools"));
   });
 });
 

@@ -62,7 +62,58 @@ describe("parseCheckFile", () => {
     assert.equal(check.intelligence, "low");
     assert.equal(check.model, "haiku");
     assert.equal(check.cluster, "low");
+    assert.equal(check.files, undefined);
     assert.equal(check.body.trim(), "Body text.");
+  });
+
+  it("retains a validated file glob in the check matrix", () => {
+    const check = parseCheckFile(
+      VALID.replace("intelligence: low", "intelligence: low\nfiles: frontend/**"),
+      "checks/frontend.md",
+    );
+    assert.equal(check.files, "frontend/**");
+    const [entry] = buildMatrix([
+      file(
+        VALID.replace("intelligence: low", "intelligence: low\nfiles: frontend/**"),
+        "checks/frontend.md",
+      ),
+    ]);
+    assert.equal(entry.files, "frontend/**");
+  });
+
+  it("allows glob syntax that resembles YAML structures in the files field", () => {
+    assert.equal(
+      parseCheckFile(
+        VALID.replace("intelligence: low", "intelligence: low\nfiles: *.go"),
+        "checks/x.md",
+      ).files,
+      "*.go",
+    );
+  });
+
+  it("rejects quoted files globs instead of treating quotes as pattern characters", () => {
+    for (const pattern of ['"frontend/**"', "'frontend/**'"]) {
+      const text = VALID.replace("intelligence: low", `intelligence: low\nfiles: ${pattern}`);
+      assert.throws(
+        () => parseCheckFile(text, "checks/scoped.md"),
+        /frontmatter values must be unquoted/,
+      );
+    }
+  });
+
+  it("rejects unsafe files globs", () => {
+    for (const pattern of [
+      "",
+      "/frontend/**",
+      "../**",
+      "frontend\\\\**",
+      "frontend/[x",
+      "frontend/[]",
+      "frontend/[z-a].js",
+    ]) {
+      const text = VALID.replace("intelligence: low", `intelligence: low\nfiles: ${pattern}`);
+      assert.throws(() => parseCheckFile(text, "checks/scoped.md"), /invalid files glob/);
+    }
   });
 
   it("maps each intelligence tier to a rolling model alias", () => {
@@ -857,6 +908,13 @@ describe("checkSetDigest", () => {
       assert.notEqual(
         checkSetDigest(
           checks.map(check => ({ ...check, model: "opus" })),
+          dir,
+        ),
+        digest,
+      );
+      assert.notEqual(
+        checkSetDigest(
+          checks.map((check, index) => (index === 0 ? { ...check, files: "src/**" } : check)),
           dir,
         ),
         digest,

@@ -70,6 +70,7 @@ import {
   validateResolutions,
 } from "./history.mjs";
 import { isRetryableGraphQLBody, requestWithRetry, truncateBody } from "./githubapi.mjs";
+import { filterDiffByGlob, matchesFileGlob } from "./file-glob.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 // The agent invocation, verdict pipeline, and cost/duration arithmetic are
 // shared with the local runner (local.mjs, behind `weave-checks run`) so the
@@ -220,11 +221,19 @@ export async function runWorker(config, deps = {}) {
   const MARKERS = markerCodec(BRANDING.markerPrefix);
   const IGNORE_FILE = `${config.checksDir}/.ignore`;
   const CHECK_DIGEST = checkSetDigest(CHECKS, REPO_DIR);
-  // Bounds the review agent's suggestions: it only saw DIFF, so it may only
-  // comment on DIFF's lines.
-  const ADDED_LINES = parseAddedLines(DIFF);
-  // Evidence for the resolution judge. PR scope, never review scope.
-  const FULL_ADDED_LINES = parseAddedLines(FULL_DIFF);
+  const CHECK_SCOPES = new Map(
+    CHECKS.map(check => {
+      if (check.files === undefined) {
+        return [check.slug, { diff: DIFF, stat: STAT, fullDiff: FULL_DIFF, fullStat: FULL_STAT }];
+      }
+      const review = filterDiffByGlob(DIFF, check.files);
+      const full = filterDiffByGlob(FULL_DIFF, check.files);
+      return [
+        check.slug,
+        { diff: review.diff, stat: review.stat, fullDiff: full.diff, fullStat: full.stat },
+      ];
+    }),
+  );
 
   mkdirSync(TEMP_DIR, { recursive: true });
 
@@ -397,19 +406,23 @@ export async function runWorker(config, deps = {}) {
   // check starts queued; the pool below takes them in order.
   function buildStates() {
     return new Map(
-      CHECKS.map(check => [
-        check.slug,
-        {
-          check,
-          status: STATUS.QUEUED,
-          outcome: null,
-          cause: null,
-          note: "Waiting for an agent slot.",
-          checkRunId: null,
-          cost: 0,
-          durationMs: 0,
-        },
-      ]),
+      CHECKS.map(check => {
+        const scope = CHECK_SCOPES.get(check.slug);
+        const skipped = check.files !== undefined && scope.diff === "";
+        return [
+          check.slug,
+          {
+            check,
+            status: skipped ? STATUS.COMPLETE : STATUS.QUEUED,
+            outcome: skipped ? OUTCOME.PASS : null,
+            cause: null,
+            note: skipped ? `No changed files match ${check.files}.` : "Waiting for an agent slot.",
+            checkRunId: null,
+            cost: 0,
+            durationMs: 0,
+          },
+        ];
+      }),
     );
   }
 
@@ -461,14 +474,18 @@ export async function runWorker(config, deps = {}) {
     return runAgent({ ...options, ...agentEnvironment() });
   }
 
-  function resolutionPromptFor(check, openThreads) {
+  function resolutionPromptFor(check, openThreads, scope) {
     const criteria = readFileSync(check.criteriaPath ?? path.join(REPO_DIR, check.path), "utf8");
     return [
       `You are resolving previously-flagged findings for the ${BRANDING.productName} "${check.name}" on a pull request.`,
       "",
       "For each previously-flagged issue below, decide whether it STILL APPLIES at the PR's current HEAD.",
-      "Read the current file at the flagged location if you need to. Read adjacent files only when needed.",
-      "Do NOT modify files. You have read-only tools.",
+      check.files === undefined ?
+        "Read the current file at the flagged location if you need to. Read adjacent files only when needed."
+      : `This check is scoped to ${check.files}; only matching changed files and threads are included, and no repository-reading tools are available.`,
+      check.files === undefined ?
+        "Do NOT modify files. You have read-only tools."
+      : "Do NOT modify files.",
       "",
       "Set `resolved` to true ONLY in these cases:",
       "- The flagged code has been changed and now satisfies the check criteria.",
@@ -495,18 +512,18 @@ export async function runWorker(config, deps = {}) {
       // still applies to the PR as a whole, so it must see every file the PR
       // touches. Handing it the incremental diff would make each file the
       // latest push skipped look like it had left the PR.
-      formatResolutionSection(openThreads, FULL_ADDED_LINES),
+      formatResolutionSection(openThreads, parseAddedLines(scope.fullDiff)),
       "",
       "## Changed files",
       "",
       "```",
-      FULL_STAT,
+      scope.fullStat,
       "```",
       "",
       "## Diff",
       "",
       "```diff",
-      FULL_DIFF,
+      scope.fullDiff,
       "```",
     ].join("\n");
   }
@@ -554,6 +571,7 @@ export async function runWorker(config, deps = {}) {
   // summary.
   async function judgeResolutions(check, openThreads, recordAttempt) {
     if (openThreads.length === 0) return { resolutions: [], error: null, cost: 0, duration: 0 };
+    const scope = CHECK_SCOPES.get(check.slug);
 
     const invocation = await runCheckAgent({
       slug: check.slug,
@@ -561,7 +579,8 @@ export async function runWorker(config, deps = {}) {
       model: check.model,
       cluster: check.cluster,
       schemaText: JSON.stringify(RESOLUTION_SCHEMA),
-      promptText: resolutionPromptFor(check, openThreads),
+      promptText: resolutionPromptFor(check, openThreads, scope),
+      toolsDisabled: check.files !== undefined,
     });
     recordAttempt("Resolution judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
@@ -608,6 +627,7 @@ export async function runWorker(config, deps = {}) {
       cluster: DEDUP_CLUSTER,
       schemaText: JSON.stringify(DEDUP_SCHEMA),
       promptText: dedupPromptFor(check, checkThreads, accepted),
+      toolsDisabled: check.files !== undefined,
     });
     recordAttempt("Dedup judge", invocation);
     const decoded = decodeAgentInvocation(invocation, {
@@ -1093,7 +1113,12 @@ export async function runWorker(config, deps = {}) {
     state.status = STATUS.RUNNING;
     state.note = `${check.description} Agent is reviewing changed lines.`;
 
-    const checkThreads = threadsForCheck(rawThreadNodes, check.slug, MARKERS);
+    const checkScope = CHECK_SCOPES.get(check.slug);
+    const checkThreads = threadsForCheck(rawThreadNodes, check.slug, MARKERS).filter(
+      thread =>
+        check.files === undefined ||
+        (thread.path !== null && matchesFileGlob(thread.path, check.files)),
+    );
     const openThreads = checkThreads.filter(thread => !isSettled(thread));
 
     // Per-phase transcript evidence for the check-run summary's collapsible
@@ -1147,17 +1172,28 @@ export async function runWorker(config, deps = {}) {
       // no extra wall-clock and means a resolution still lands even if the
       // main agent's run this time comes back neutral.
       [initialResult, judgment] = await Promise.all([
-        evaluate({
-          check,
-          diff: DIFF,
-          stat: STAT,
-          addedLines: ADDED_LINES,
-          schemaText: SCHEMA,
-          historySection: formatHistorySection(checkThreads),
-          productName: BRANDING.productName,
-          onAttempt: (label, invocation) => recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
-          ...agentEnvironment(),
-        }),
+        checkScope.diff === "" ?
+          Promise.resolve({
+            outcome: OUTCOME.PASS,
+            reason: `No changed files match ${check.files}.`,
+            accepted: [],
+            proseFallbacks: [],
+            rejected: [],
+            cost: 0,
+            duration: 0,
+          })
+        : evaluate({
+            check,
+            diff: checkScope.diff,
+            stat: checkScope.stat,
+            addedLines: parseAddedLines(checkScope.diff),
+            schemaText: SCHEMA,
+            historySection: formatHistorySection(checkThreads),
+            productName: BRANDING.productName,
+            onAttempt: (label, invocation) =>
+              recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
+            ...agentEnvironment(),
+          }),
         judgeResolutions(check, openThreads, (label, invocation) =>
           recordAttempt(TRANSCRIPT_PHASE.RESOLVE, label, invocation),
         ),
@@ -1375,6 +1411,17 @@ export async function runWorker(config, deps = {}) {
     await updateMasterBestEffort();
 
     const rawThreadNodes = await fetchAllReviewThreads();
+    for (const state of states.values()) {
+      if (state.status !== STATUS.COMPLETE || state.check.files === undefined) continue;
+      const hasOpenThreads = threadsForCheck(rawThreadNodes, state.check.slug, MARKERS)
+        .filter(thread => thread.path !== null && matchesFileGlob(thread.path, state.check.files))
+        .some(thread => !isSettled(thread));
+      if (hasOpenThreads) {
+        state.status = STATUS.QUEUED;
+        state.outcome = null;
+        state.note = "Waiting to resolve previously-flagged findings.";
+      }
+    }
 
     await runQueuedChecks(rawThreadNodes);
     await updateMaster(true);

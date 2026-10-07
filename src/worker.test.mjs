@@ -203,6 +203,142 @@ async function run(env, github, evaluate, extraDeps = {}) {
   });
 }
 
+describe("runWorker file-glob scoping", () => {
+  it("runs only matching checks and gives them scoped review diffs", async () => {
+    const fullDiff = [
+      DIFF.trimEnd(),
+      "diff --git a/backend/api.go b/backend/api.go",
+      "--- a/backend/api.go",
+      "+++ b/backend/api.go",
+      "@@ -0,0 +1 @@",
+      "+backend change",
+      "",
+    ].join("\n");
+    const matrix = [
+      { ...CHECKS[0], files: "app/**" },
+      { ...CHECKS[1], files: "db/**" },
+    ];
+    const { env } = workerEnv({}, { diff: fullDiff });
+    writeFileSync(env.MATRIX_PATH, JSON.stringify({ check: matrix }));
+    writeFileSync(env.FULL_DIFF_PATH, fullDiff);
+    writeFileSync(env.STAT_PATH, "app/main.go | 2 ++\nbackend/api.go | 1 +");
+    writeFileSync(env.FULL_STAT_PATH, "app/main.go | 2 ++\nbackend/api.go | 1 +");
+    const github = fakeGitHub();
+    const seen = [];
+
+    const result = await run(env, github, async ({ check, diff, stat }) => {
+      seen.push(check.slug);
+      assert.match(diff, /app\/main\.go/);
+      assert.doesNotMatch(diff, /backend\/api\.go|backend change/);
+      assert.match(stat, /app\/main\.go/);
+      assert.doesNotMatch(stat, /backend\/api\.go/);
+      return pass();
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(seen, ["first-check"]);
+    assert.equal(github.childRuns().length, 1);
+    const results = JSON.parse(readFileSync(env.RESULTS_PATH, "utf8"));
+    assert.equal(results.checks.length, 2);
+    assert.match(
+      results.checks.find(check => check.slug === "second-check").detail,
+      /No changed files match db\/\*\*/,
+    );
+  });
+
+  it("fetches history before skipping non-matching checks", async () => {
+    const matrix = CHECKS.map(check => ({ ...check, files: "db/**" }));
+    const { env } = workerEnv();
+    writeFileSync(env.MATRIX_PATH, JSON.stringify({ check: matrix }));
+    const github = fakeGitHub();
+
+    const result = await run(env, github, async () => {
+      throw new Error("a non-matching check must not run");
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(github.childRuns().length, 0);
+    assert.equal(
+      github.calls.some(
+        call => call.route === "graphql" && call.body.query.includes("reviewThreads"),
+      ),
+      true,
+    );
+    assert.equal(github.masterPatches().at(-1).body.conclusion, "success");
+  });
+
+  it("resolves matching open threads when no scoped files changed", async () => {
+    const matrix = CHECKS.map(check => ({ ...check, files: "db/**" }));
+    const { env } = workerEnv();
+    writeFileSync(env.MATRIX_PATH, JSON.stringify({ check: matrix }));
+    const thread = {
+      id: "T-open",
+      isResolved: false,
+      isOutdated: false,
+      path: "db/tables.sql",
+      line: 1,
+      comments: {
+        nodes: [
+          {
+            databaseId: 55,
+            body: appendMarker("Rename `one`.", "second-check"),
+            pullRequestReview: {
+              databaseId: 77,
+              id: "R77",
+              state: "COMMENTED",
+              isMinimized: false,
+            },
+          },
+        ],
+      },
+    };
+    const github = fakeGitHub({ threads: [thread] });
+    const judgeInvocations = [];
+
+    await run(
+      env,
+      github,
+      async () => {
+        throw new Error("empty scoped diffs should not run a main review");
+      },
+      {
+        runAgent: async options => {
+          judgeInvocations.push({ suffix: options.suffix, prompt: options.promptText });
+          return {
+            code: 0,
+            sessionId: "judge-session",
+            cost: 0.01,
+            costLabel: "client-reported cost",
+            transcript: [],
+            cli: {
+              subtype: "success",
+              is_error: false,
+              structured_output: {
+                resolutions: [
+                  { thread_id: "T-open", resolved: true, evidence: "No longer applies." },
+                ],
+              },
+              duration_ms: 10,
+            },
+          };
+        },
+      },
+    );
+
+    assert.deepEqual(
+      judgeInvocations.map(({ suffix }) => suffix),
+      ["resolve"],
+    );
+    assert.match(judgeInvocations[0].prompt, /\[id=T-open\]/);
+    assert.equal(github.childRuns().length, 1);
+    assert.ok(
+      github.calls.some(
+        call => call.route === "graphql" && call.body.query.includes("resolveReviewThread"),
+      ),
+    );
+  });
+});
+
 describe("readWorkerConfig", () => {
   it("defaults to the weave-router provider and requires its key", () => {
     const { env } = workerEnv({ WEAVE_ROUTER_KEY: "rk" });

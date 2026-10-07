@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { compileFileGlob } from "./file-glob.mjs";
+
 // Check-file parsing, diff parsing, and the fixed vocabularies Weave Checks
 // shares between the GitHub action, the worker, and the local CLI.
 //
@@ -77,7 +79,7 @@ const FRONTMATTER = /^---\n([\s\S]*?)\n---\n?/;
 // misreading valid-but-unsupported YAML.
 // Keys the contract permits in a check's frontmatter. Anything else is
 // rejected so a misspelled or made-up field fails discovery loudly.
-const FRONTMATTER_KEYS = new Set(["name", "description", "intelligence"]);
+const FRONTMATTER_KEYS = new Set(["name", "description", "intelligence", "files"]);
 
 function parseFrontmatter(text) {
   const match = FRONTMATTER.exec(text);
@@ -105,7 +107,10 @@ function parseFrontmatter(text) {
         `unknown frontmatter key "${key}" (allowed: ${[...FRONTMATTER_KEYS].sort().join(", ")})`,
       );
     }
-    if (/^["'[{>|&*!%@`]/.test(value) || /(?:^|\s)#/.test(value)) {
+    if (
+      (key === "files" ? /^["']/.test(value) : /^["'[{>|&*!%@`]/.test(value)) ||
+      /(?:^|\s)#/.test(value)
+    ) {
       throw new Error(
         `${rawLine}: frontmatter values must be unquoted single-line scalars without comments or YAML structures`,
       );
@@ -235,6 +240,15 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
     );
   }
 
+  const files = fields.get("files");
+  if (files !== undefined) {
+    try {
+      compileFileGlob(files);
+    } catch (error) {
+      throw new Error(`${filePath}: invalid files glob: ${error.message}`);
+    }
+  }
+
   if (body.trim() === "") {
     throw new Error(`${filePath}: check body is empty`);
   }
@@ -244,6 +258,7 @@ export function parseCheckFile(text, filePath, policy = WEAVE_POLICY) {
     name: fields.get("name"),
     description: fields.get("description"),
     intelligence,
+    ...(files === undefined ? {} : { files }),
     model: modelForIntelligence(intelligence),
     cluster: intelligence,
     path: filePath,
@@ -627,6 +642,7 @@ export function checkSetDigest(checks, repoDir = ".") {
       slug: check.slug,
       intelligence: check.intelligence,
       model: check.model,
+      files: check.files ?? null,
       criteria: readFileSync(check.criteriaPath ?? path.join(repoDir, check.path), "utf8"),
     }))
     .sort((a, b) =>
