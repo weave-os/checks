@@ -1172,17 +1172,28 @@ export async function runWorker(config, deps = {}) {
       // no extra wall-clock and means a resolution still lands even if the
       // main agent's run this time comes back neutral.
       [initialResult, judgment] = await Promise.all([
-        evaluate({
-          check,
-          diff: checkScope.diff,
-          stat: checkScope.stat,
-          addedLines: parseAddedLines(checkScope.diff),
-          schemaText: SCHEMA,
-          historySection: formatHistorySection(checkThreads),
-          productName: BRANDING.productName,
-          onAttempt: (label, invocation) => recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
-          ...agentEnvironment(),
-        }),
+        checkScope.diff === "" ?
+          Promise.resolve({
+            outcome: OUTCOME.PASS,
+            reason: `No changed files match ${check.files}.`,
+            accepted: [],
+            proseFallbacks: [],
+            rejected: [],
+            cost: 0,
+            duration: 0,
+          })
+        : evaluate({
+            check,
+            diff: checkScope.diff,
+            stat: checkScope.stat,
+            addedLines: parseAddedLines(checkScope.diff),
+            schemaText: SCHEMA,
+            historySection: formatHistorySection(checkThreads),
+            productName: BRANDING.productName,
+            onAttempt: (label, invocation) =>
+              recordAttempt(TRANSCRIPT_PHASE.MAIN, label, invocation),
+            ...agentEnvironment(),
+          }),
         judgeResolutions(check, openThreads, (label, invocation) =>
           recordAttempt(TRANSCRIPT_PHASE.RESOLVE, label, invocation),
         ),
@@ -1399,10 +1410,18 @@ export async function runWorker(config, deps = {}) {
     states = buildStates();
     await updateMasterBestEffort();
 
-    const rawThreadNodes =
-      [...states.values()].some(state => state.status === STATUS.QUEUED) ?
-        await fetchAllReviewThreads()
-      : [];
+    const rawThreadNodes = await fetchAllReviewThreads();
+    for (const state of states.values()) {
+      if (state.status !== STATUS.COMPLETE || state.check.files === undefined) continue;
+      const hasOpenThreads = threadsForCheck(rawThreadNodes, state.check.slug, MARKERS)
+        .filter(thread => thread.path !== null && matchesFileGlob(thread.path, state.check.files))
+        .some(thread => !isSettled(thread));
+      if (hasOpenThreads) {
+        state.status = STATUS.QUEUED;
+        state.outcome = null;
+        state.note = "Waiting to resolve previously-flagged findings.";
+      }
+    }
 
     await runQueuedChecks(rawThreadNodes);
     await updateMaster(true);

@@ -107,7 +107,10 @@ function parseFrontmatter(text) {
         `unknown frontmatter key "${key}" (allowed: ${[...FRONTMATTER_KEYS].sort().join(", ")})`,
       );
     }
-    if ((key !== "files" && /^["'[{>|&*!%@`]/.test(value)) || /(?:^|\s)#/.test(value)) {
+    if (
+      (key === "files" ? /^["']/.test(value) : /^["'[{>|&*!%@`]/.test(value)) ||
+      /(?:^|\s)#/.test(value)
+    ) {
       throw new Error(
         `${rawLine}: frontmatter values must be unquoted single-line scalars without comments or YAML structures`,
       );

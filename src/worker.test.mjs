@@ -246,7 +246,7 @@ describe("runWorker file-glob scoping", () => {
     );
   });
 
-  it("skips thread lookup when no scoped check matches the diff", async () => {
+  it("fetches history before skipping non-matching checks", async () => {
     const matrix = CHECKS.map(check => ({ ...check, files: "db/**" }));
     const { env } = workerEnv();
     writeFileSync(env.MATRIX_PATH, JSON.stringify({ check: matrix }));
@@ -259,10 +259,83 @@ describe("runWorker file-glob scoping", () => {
     assert.equal(result.ok, true);
     assert.equal(github.childRuns().length, 0);
     assert.equal(
-      github.calls.some(call => call.route === "graphql"),
-      false,
+      github.calls.some(
+        call => call.route === "graphql" && call.body.query.includes("reviewThreads"),
+      ),
+      true,
     );
     assert.equal(github.masterPatches().at(-1).body.conclusion, "success");
+  });
+
+  it("resolves matching open threads when no scoped files changed", async () => {
+    const matrix = CHECKS.map(check => ({ ...check, files: "db/**" }));
+    const { env } = workerEnv();
+    writeFileSync(env.MATRIX_PATH, JSON.stringify({ check: matrix }));
+    const thread = {
+      id: "T-open",
+      isResolved: false,
+      isOutdated: false,
+      path: "db/tables.sql",
+      line: 1,
+      comments: {
+        nodes: [
+          {
+            databaseId: 55,
+            body: appendMarker("Rename `one`.", "second-check"),
+            pullRequestReview: {
+              databaseId: 77,
+              id: "R77",
+              state: "COMMENTED",
+              isMinimized: false,
+            },
+          },
+        ],
+      },
+    };
+    const github = fakeGitHub({ threads: [thread] });
+    const judged = [];
+
+    await run(
+      env,
+      github,
+      async () => {
+        throw new Error("empty scoped diffs should not run a main review");
+      },
+      {
+        runAgent: async options => {
+          judged.push({ suffix: options.suffix, prompt: options.promptText });
+          return {
+            code: 0,
+            sessionId: "judge-session",
+            cost: 0.01,
+            costLabel: "client-reported cost",
+            transcript: [],
+            cli: {
+              subtype: "success",
+              is_error: false,
+              structured_output: {
+                resolutions: [
+                  { thread_id: "T-open", resolved: true, evidence: "No longer applies." },
+                ],
+              },
+              duration_ms: 10,
+            },
+          };
+        },
+      },
+    );
+
+    assert.deepEqual(
+      judged.map(({ suffix }) => suffix),
+      ["resolve"],
+    );
+    assert.match(judged[0].prompt, /\[id=T-open\]/);
+    assert.equal(github.childRuns().length, 1);
+    assert.ok(
+      github.calls.some(
+        call => call.route === "graphql" && call.body.query.includes("resolveReviewThread"),
+      ),
+    );
   });
 });
 

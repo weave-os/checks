@@ -91,6 +91,16 @@ describe("parseCheckFile", () => {
     );
   });
 
+  it("rejects quoted files globs instead of treating quotes as pattern characters", () => {
+    for (const pattern of ['"frontend/**"', "'frontend/**'"]) {
+      const text = VALID.replace("intelligence: low", `intelligence: low\nfiles: ${pattern}`);
+      assert.throws(
+        () => parseCheckFile(text, "checks/scoped.md"),
+        /frontmatter values must be unquoted/,
+      );
+    }
+  });
+
   it("rejects unsafe files globs", () => {
     for (const pattern of [
       "",
