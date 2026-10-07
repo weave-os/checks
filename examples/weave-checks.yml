@@ -7,7 +7,7 @@ on:
 
 jobs:
   weave-checks:
-    uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0
+    uses: weave-os/checks/.github/workflows/weave-checks.yml@v1.0.1
     permissions:
       id-token: write
     with:
