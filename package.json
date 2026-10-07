@@ -1,6 +1,6 @@
 {
   "name": "@weave-os/checks",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Advisory, per-concern AI code review for pull requests, driven by Markdown check files.",
   "license": "Apache-2.0",
   "type": "module",
