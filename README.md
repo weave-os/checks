@@ -131,6 +131,21 @@ The Markdown file defining a check must have frontmatter with the following meta
 - `name`: human-friendly name for the check.
 - `description`: explains what the check is for in one sentence.
 - `intelligence`: one of `low`, `medium`, `high`, or `maximum`. This is a cost optimization lever. Warning: any check that uses `high` or `maximum` will be extremely expensive over time if you run it on every single commit!
+- `files` (optional): a repository-relative glob. The check runs only when a changed file matches, and its prompt receives only matching files from the diff. For scoped checks, repository-reading and shell tools are disabled so it cannot inspect files outside the matching diff. When no changed files match, the orchestrator skips the check without creating a per-check run.
+
+Glob syntax: `*` matches within one path segment, `**` matches across directories, `?` matches one character, and `[abc]` or `[!abc]` matches one character from (or not in) a set. Use forward slashes. For example:
+
+```yaml
+---
+name: Frontend accessibility
+description: Checks changed frontend code for accessibility issues.
+intelligence: medium
+files: frontend/**
+---
+Look for accessibility regressions in changed frontend code.
+```
+
+A check without `files` keeps the existing behavior and receives the full review diff.
 
 After the frontmatter there is no required structure. However, we would recommend including a couple sections in your file to help the agent:
 

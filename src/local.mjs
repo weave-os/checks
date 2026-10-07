@@ -36,6 +36,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import { OUTCOME, RESULT_SCHEMA, parseAddedLines, publicOutcome } from "./parse.mjs";
+import { filterDiffByGlob } from "./file-glob.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 import {
   evaluateCheck,
@@ -101,6 +102,23 @@ export function positiveInteger(value, fallback) {
 export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
   const addedLines = parseAddedLines(config.diff);
   const checkResults = await runPool(config.checks, config.parallel, async check => {
+    const scoped =
+      check.files === undefined ?
+        { diff: config.diff, stat: config.stat }
+      : filterDiffByGlob(config.diff, check.files);
+    if (check.files !== undefined && scoped.diff === "") {
+      const checkResult = {
+        outcome: OUTCOME.PASS,
+        reason: `No changed files match ${check.files}.`,
+        cost: 0,
+        duration: 0,
+      };
+      writeFileSync(
+        resultPath(config.tempDir, check.slug, "result.json"),
+        `${JSON.stringify(checkResult, null, 2)}\n`,
+      );
+      return summarizeCheck(check, checkResult);
+    }
     process.stderr.write(`Weave Checks: running ${check.slug}...\n`);
     const settingsPath =
       config.settingsDir === null ?
@@ -119,9 +137,9 @@ export async function runChecks(config, { evaluate = evaluateCheck } = {}) {
         check,
         repoDir: config.repoDir,
         tempDir: config.tempDir,
-        diff: config.diff,
-        stat: config.stat,
-        addedLines,
+        diff: scoped.diff,
+        stat: scoped.stat,
+        addedLines: check.files === undefined ? addedLines : parseAddedLines(scoped.diff),
         schemaText: config.schemaText,
         // No history: a local run has no review threads to compare against.
         //

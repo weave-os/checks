@@ -34,9 +34,11 @@ import {
   OUTCOME,
   VERDICT,
   interpretResult,
+  parseAddedLines,
   parseStructuredOutput,
   validateResult,
 } from "./parse.mjs";
+import { filterDiffByGlob } from "./file-glob.mjs";
 import { DEFAULT_BRANDING } from "./branding.mjs";
 import { childEnvironment } from "./provider.mjs";
 import { splitStreamJson } from "./streamsplit.mjs";
@@ -85,6 +87,7 @@ export async function runClaude({
   settingsPath = null,
   dropEnv = [],
   onCostError = null,
+  toolsDisabled = false,
 }) {
   const promptPath = resultPath(tempDir, slug, `${suffix}.prompt.txt`);
   const transcriptPath = resultPath(tempDir, slug, `${suffix}.transcript.jsonl`);
@@ -112,12 +115,9 @@ export async function runClaude({
     schemaText,
     "--permission-mode",
     "dontAsk",
-    "--allowedTools",
-    "Read",
-    "Glob",
-    "Grep",
-    "Bash(git diff *)",
-    "Bash(git show *)",
+    ...(toolsDisabled ?
+      ["--tools", "", "--strict-mcp-config"]
+    : ["--allowedTools", "Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git show *)"]),
     ...(settingSources === null ? [] : ["--setting-sources", settingSources]),
     // `--settings` takes highest precedence and is merged over whatever
     // `--setting-sources` loaded. Local may pass a generated file here (a
@@ -417,8 +417,15 @@ export function promptFor(
     `You are running the advisory ${productName} "${check.name}" on a pull request.`,
     "",
     "Review ONLY changed lines in the diff below.",
-    "- Read adjacent repository files only when needed to judge a changed line.",
-    "- Do NOT modify files. You have read-only tools.",
+    ...(check.files === undefined ?
+      [
+        "- Read adjacent repository files only when needed to judge a changed line.",
+        "- Do NOT modify files. You have read-only tools.",
+      ]
+    : [
+        `- This check is scoped to ${check.files}; the supplied diff and history include only matching files.`,
+        "- You have no repository-reading or shell tools; do not request or infer content from other files.",
+      ]),
     "- Do NOT report pre-existing issues this diff did not introduce.",
     "- Provide literal replacements only for lines present in the diff.",
     "- Set PASS when the changed lines do not violate the criteria.",
@@ -501,6 +508,13 @@ export async function evaluateCheck({
   onAttempt,
   onCostError,
 }) {
+  if (check.files !== undefined) {
+    const scoped = filterDiffByGlob(diff, check.files);
+    diff = scoped.diff;
+    stat = scoped.stat;
+    addedLines = parseAddedLines(diff);
+  }
+
   const invoke = () =>
     runClaude({
       slug: check.slug,
@@ -516,6 +530,7 @@ export async function evaluateCheck({
       settingsPath,
       dropEnv,
       onCostError,
+      toolsDisabled: check.files !== undefined,
     });
 
   const invocation = await invoke();

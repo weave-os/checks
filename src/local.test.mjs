@@ -269,6 +269,46 @@ describe("runChecks", () => {
     assert.equal(artifact.reason, "line one is bad");
   });
 
+  it("skips checks without matching changed files and scopes matching diff and stat", async () => {
+    const { env, tempDir } = fixture();
+    const config = readConfig(env);
+    const backendDiff = [
+      DIFF.trimEnd(),
+      "diff --git a/backend/api.go b/backend/api.go",
+      "--- a/backend/api.go",
+      "+++ b/backend/api.go",
+      "@@ -0,0 +1 @@",
+      "+backend change",
+      "",
+    ].join("\n");
+    config.diff = backendDiff;
+    config.stat = "app/main.go | 2 ++\nbackend/api.go | 1 +";
+    config.checks = [
+      { ...CHECKS[0], files: "app/**" },
+      { ...CHECKS[1], files: "db/**" },
+    ];
+    const seen = [];
+
+    const summary = await runChecks(config, {
+      evaluate: async ({ check, diff, stat }) => {
+        seen.push(check.slug);
+        assert.match(diff, /app\/main\.go/);
+        assert.doesNotMatch(diff, /backend\/api\.go|backend change/);
+        assert.match(stat, /app\/main\.go/);
+        assert.doesNotMatch(stat, /backend\/api\.go/);
+        return passResult("scoped");
+      },
+    });
+
+    assert.deepEqual(seen, ["first-check"]);
+    assert.equal(summary.checks[1].outcome, "pass");
+    assert.match(summary.checks[1].reason, /No changed files match db\/\*\*/);
+    assert.equal(
+      JSON.parse(readFileSync(path.join(tempDir, "second-check.result.json"), "utf8")).cost,
+      0,
+    );
+  });
+
   it("uses each check's intelligence as the generated settings filename", async () => {
     const { env, tempDir } = fixture();
     env.SETTINGS_DIR = path.join(tempDir, "settings");
