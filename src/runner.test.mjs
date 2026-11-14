@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 
 import {
@@ -14,6 +18,7 @@ import {
   VERDICT,
 } from "./parse.mjs";
 import {
+  decodeAgentInvocation,
   evaluateCheck,
   formatDuration,
   formatUsd,
@@ -195,6 +200,147 @@ function invoke(space, overrides = {}) {
 }
 
 describe("runClaude", () => {
+  it("decodes UTF-8 independently of every stdout and stderr byte boundary", async t => {
+    const space = workspace();
+    const filename = "café-🧶.js";
+    const events = successEvents({
+      verdict: VERDICT.FAIL,
+      reason: "Synthetic finding",
+      suggestions: [{ file: filename, line: 1, comment: "修正 café 🧶" }],
+    });
+    const diagnostic = "Synthetic café-🧶 diagnostic\n";
+    t.mock.method(childProcess, "spawn", () => {
+      const child = new EventEmitter();
+      child.stdin = new PassThrough();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      let drained = 0;
+      for (const stream of [child.stdout, child.stderr]) {
+        stream.on("end", () => {
+          if (++drained === 2) child.emit("close", 0);
+        });
+      }
+      child.stdin.on("finish", () => {
+        for (const byte of Buffer.from(`${events.join("\n")}\n`)) {
+          child.stdout.write(Buffer.from([byte]));
+        }
+        for (const byte of Buffer.from(diagnostic)) {
+          child.stderr.write(Buffer.from([byte]));
+        }
+        child.stdout.end();
+        child.stderr.end();
+      });
+      return child;
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+
+    const invocation = await invoke(space);
+
+    assert.equal(invocation.cli.structured_output.suggestions[0].file, filename);
+    assert.equal(invocation.cli.structured_output.suggestions[0].comment, "修正 café 🧶");
+    assert.deepEqual(invocation.transcript, events);
+    assert.equal(invocation.stderr, diagnostic);
+  });
+
+  it("rejects success when stdin closes before prompt completion without an error event", async t => {
+    const space = workspace();
+    const events = successEvents({ verdict: VERDICT.PASS, reason: "fine", resolutions: [] });
+    let inputErrors = 0;
+    t.mock.method(childProcess, "spawn", () => {
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      let drained = 0;
+      for (const stream of [child.stdout, child.stderr]) {
+        stream.on("end", () => {
+          if (++drained === 2) child.emit("close", 0);
+        });
+      }
+      child.stdin = new Writable({
+        write(_chunk, _encoding, callback) {
+          // Model cancellation after destruction: the write callback fails,
+          // but the destroyed Writable does not emit an error event.
+          queueMicrotask(() => {
+            child.stdin.destroy();
+            callback(new Error("Synthetic cancelled prompt write"));
+            child.stdout.end(`${events.join("\n")}\n`);
+            child.stderr.end("Synthetic diagnostic\n");
+          });
+        },
+      });
+      child.stdin.on("error", () => inputErrors++);
+      return child;
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+
+    const invocation = await invoke(space);
+
+    assert.equal(inputErrors, 0, "exercise cancellation without a stream error event");
+    assert.equal(invocation.code, 0, "preserve the agent's actual exit status");
+    assert.deepEqual(invocation.transcript, events);
+    assert.ok(invocation.stderr.startsWith("Synthetic diagnostic\n"));
+    assert.match(invocation.processError, /prompt/i);
+    assert.equal(decodeAgentInvocation(invocation, { label: "Resolution judge" }).ok, false);
+    const normalized = normalize(invocation, new Map());
+    assert.equal(normalized.outcome, OUTCOME.NEUTRAL);
+    assert.equal(normalized.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
+    assert.notEqual(normalized.retryable, true);
+  });
+
+  it("rejects partial-prompt judge output while draining UTF-8 diagnostics", async () => {
+    const space = workspace();
+    const terminal = successEvents({ resolutions: [] }).join("\n") + "\n";
+    const diagnostic = "Synthetic café-🧶 diagnostic\n";
+    const bytes = Buffer.from(diagnostic);
+    const split = bytes.indexOf(Buffer.from("🧶")) + 2;
+    writeFileSync(
+      path.join(space.root, "bin", "claude"),
+      `#!${process.execPath}
+const { closeSync } = require("node:fs");
+closeSync(0);
+process.stdout.write(${JSON.stringify(terminal)});
+process.stderr.write(Buffer.from(${JSON.stringify(bytes.subarray(0, split).toString("base64"))}, "base64"));
+setTimeout(() => process.stderr.end(Buffer.from(${JSON.stringify(bytes.subarray(split).toString("base64"))}, "base64")), 50);
+`,
+    );
+
+    const invocation = await invoke(space, { promptText: "synthetic prompt\n".repeat(100000) });
+
+    assert.equal(invocation.code, 0, "preserve the agent's actual exit status");
+    assert.match(invocation.processError, /prompt/);
+    assert.ok(invocation.stderr.startsWith(diagnostic));
+    assert.match(invocation.transcript.join("\n"), /resolutions/);
+    const judged = decodeAgentInvocation(invocation, { label: "Resolution judge" });
+    assert.equal(judged.ok, false, "a judge must not act on a partially delivered prompt");
+    assert.match(judged.error, /prompt/);
+    const normalized = normalize(invocation, new Map());
+    assert.equal(normalized.outcome, OUTCOME.NEUTRAL);
+    assert.equal(normalized.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
+    assert.notEqual(normalized.retryable, true);
+  });
+
+  it("reports a spawn failure without waiting for agent output", async () => {
+    const space = workspace();
+    const invocation = await invoke(space, {
+      provider: fakeProvider({ envFor: () => ({ PATH: path.join(space.root, "missing") }) }),
+    });
+
+    assert.equal(invocation.code, -1);
+    assert.match(invocation.stderr, /ENOENT/);
+    assert.equal(invocation.cli, null);
+    const result = normalize(invocation, new Map());
+    assert.equal(result.outcome, OUTCOME.NEUTRAL);
+    assert.equal(result.cause, NEUTRAL_CAUSE.INFRASTRUCTURE);
+  });
+
   it("invokes the CLI with the stream-json review argv", async () => {
     const space = workspace();
     space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));
