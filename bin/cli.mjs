@@ -344,9 +344,8 @@ ${POLICY_HELP}
         console.error(
           `discovered ${describeEntry(entry, env.WEAVE_CHECKS_PROVIDER || "weave-router")}`,
         );
-      const checkDigest = checkSetDigest(matrix, repoDir);
-
       const { pathspecs, ignorePath } = readIgnorePathspecs(path.join(repoDir, checksDir));
+      const checkDigest = checkSetDigest(matrix, repoDir, pathspecs);
       console.error(
         pathspecs.length === 0 ?
           `no ignored paths in ${checksDir}/.ignore`
