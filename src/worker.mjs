@@ -71,6 +71,8 @@ import {
 } from "./history.mjs";
 import { isRetryableGraphQLBody, requestWithRetry, truncateBody } from "./githubapi.mjs";
 import { filterDiffByGlob, matchesFileGlob } from "./file-glob.mjs";
+import { readIgnorePathspecs } from "./ignore.mjs";
+import { validateChecksDir } from "./options.mjs";
 import { PROVIDER, createProvider, parseProviderEnv } from "./provider.mjs";
 // The agent invocation, verdict pipeline, and cost/duration arithmetic are
 // shared with the local runner (local.mjs, behind `weave-checks run`) so the
@@ -163,7 +165,7 @@ export function readWorkerConfig(env) {
     }),
     branding: brandingFromEnv(env),
     // Named in user-facing text ("excluded by .weave-checks/.ignore").
-    checksDir: env.WEAVE_CHECKS_DIR || ".weave-checks",
+    checksDir: validateChecksDir(env.WEAVE_CHECKS_DIR || ".weave-checks"),
   };
 }
 
@@ -220,7 +222,8 @@ export async function runWorker(config, deps = {}) {
   } = config;
   const MARKERS = markerCodec(BRANDING.markerPrefix);
   const IGNORE_FILE = `${config.checksDir}/.ignore`;
-  const CHECK_DIGEST = checkSetDigest(CHECKS, REPO_DIR);
+  const { pathspecs } = readIgnorePathspecs(path.join(REPO_DIR, config.checksDir));
+  const CHECK_DIGEST = checkSetDigest(CHECKS, REPO_DIR, pathspecs);
   const CHECK_SCOPES = new Map(
     CHECKS.map(check => {
       if (check.files === undefined) {

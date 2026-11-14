@@ -633,10 +633,10 @@ export function publicOutcome(outcome) {
   return PUBLIC_OUTCOME[outcome] ?? PUBLIC_OUTCOME[OUTCOME.NEUTRAL];
 }
 
-// A check-set digest prevents an old aggregate from narrowing a newly added
-// or changed check past PR lines it never reviewed. The criteria file is read
-// the same way the runner locates it, and sorting makes matrix order irrelevant.
-export function checkSetDigest(checks, repoDir = ".") {
+// A check-set digest prevents an old aggregate from narrowing review past PR
+// lines it never read. Exclusions are part of that scope: removing one must
+// re-review the previously ignored lines, even when the criteria did not change.
+export function checkSetDigest(checks, repoDir = ".", ignorePathspecs = []) {
   const entries = checks
     .map(check => ({
       slug: check.slug,
@@ -650,7 +650,8 @@ export function checkSetDigest(checks, repoDir = ".") {
       : a.slug > b.slug ? 1
       : 0,
     );
-  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+  const scope = { checks: entries, ignorePathspecs: [...new Set(ignorePathspecs)].sort() };
+  return createHash("sha256").update(JSON.stringify(scope)).digest("hex");
 }
 
 // "Every check on this sha with this exact check set finished a review." The

@@ -12,6 +12,8 @@ import {
   formatReviewedMarker,
 } from "./parse.mjs";
 import { appendMarker } from "./history.mjs";
+import { readIgnorePathspecs } from "./ignore.mjs";
+import { validateChecksDir } from "./options.mjs";
 import { readWorkerConfig, runWorker } from "./worker.mjs";
 
 const HEAD_SHA = "a".repeat(40);
@@ -810,6 +812,42 @@ describe("runWorker", () => {
     assert.match(final.body.output.summary, /excluded by `checks\/\.ignore`/);
     assert.equal(readFileSync(env.COMPLETE_PATH, "utf8"), "no-reviewable-changes\n");
   });
+
+  for (const diff of [DIFF, ""]) {
+    it(`publishes ${diff === "" ? "empty" : "completed"} review markers matching preparation for a backslash-separated checks-dir`, async () => {
+      const { env } = workerEnv({ WEAVE_CHECKS_DIR: ".\\checks\\" }, { diff });
+      const preparationDir = validateChecksDir(env.WEAVE_CHECKS_DIR);
+      writeFileSync(path.join(env.REPO_DIR, preparationDir, ".ignore"), "generated\nvendor\n");
+      const { pathspecs } = readIgnorePathspecs(path.join(env.REPO_DIR, preparationDir));
+      const expectedMarker = formatReviewedMarker(
+        HEAD_SHA,
+        checkSetDigest(CHECKS, env.REPO_DIR, pathspecs),
+      );
+      const github = fakeGitHub();
+
+      const outcome = await run(env, github, async () => pass());
+
+      assert.equal(outcome.ok, true);
+      assert.equal(github.masterPatches().at(-1).body.external_id, expectedMarker);
+      assert.equal(readWorkerConfig(env).checksDir, preparationDir);
+    });
+
+    it(`invalidates ${diff === "" ? "empty" : "completed"} review markers when exclusions change`, async () => {
+      const { env } = workerEnv({}, { diff });
+      const ignorePath = path.join(env.REPO_DIR, env.WEAVE_CHECKS_DIR, ".ignore");
+      const markerFor = async text => {
+        writeFileSync(ignorePath, text);
+        const github = fakeGitHub();
+        const outcome = await run(env, github, async () => pass());
+        assert.equal(outcome.ok, true);
+        return github.masterPatches().at(-1).body.external_id;
+      };
+
+      const marker = await markerFor("generated\nvendor\n");
+      assert.notEqual(await markerFor("vendor\n"), marker);
+      assert.equal(await markerFor("# Same exclusions\nvendor/\ngenerated\n"), marker);
+    });
+  }
 
   it("neutralizes a check whose head moved before it could post", async () => {
     const { env } = workerEnv();
