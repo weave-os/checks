@@ -226,12 +226,12 @@ function hunkCounts(hunks, lines) {
   return counts;
 }
 
-function isNewHunk(hunk, previous, lines) {
+function isNewHunk(hunk, previousCounts, lines) {
   const body = hunkBody(hunk, lines);
   if (body === null) return true;
-  const count = previous.get(body) ?? 0;
+  const count = previousCounts.get(body) ?? 0;
   if (count === 0) return true;
-  previous.set(body, count - 1);
+  previousCounts.set(body, count - 1);
   return false;
 }
 
@@ -249,24 +249,28 @@ export function filterRebasedDiff(
   for (const section of currentSections) {
     const filePath = section.newPath ?? section.oldPath;
     const previous = previousSections.get(filePath);
-    const current = splitHunks(section);
+    const currentSplit = splitHunks(section);
     if (
       previous !== undefined &&
-      current.hunks.length === 0 &&
+      currentSplit.hunks.length === 0 &&
       sectionFingerprint(previous) === sectionFingerprint(section)
     )
       continue;
-    const before = previous === undefined ? null : splitHunks(previous);
-    if (before === null || current.hunks.length === 0 || current.header !== before.header) {
+    const previousSplit = previous === undefined ? null : splitHunks(previous);
+    if (
+      previousSplit === null ||
+      currentSplit.hunks.length === 0 ||
+      currentSplit.header !== previousSplit.header
+    ) {
       kept.push(section);
       continue;
     }
     const previousLines = readPreviousFile(filePath)?.split("\n") ?? null;
     const currentLines = readCurrentFile(filePath)?.split("\n") ?? null;
-    const previousHunks = hunkCounts(before.hunks, previousLines);
-    const hunks = current.hunks.filter(hunk => isNewHunk(hunk, previousHunks, currentLines));
+    const previousHunks = hunkCounts(previousSplit.hunks, previousLines);
+    const hunks = currentSplit.hunks.filter(hunk => isNewHunk(hunk, previousHunks, currentLines));
     if (hunks.length === 0) continue;
-    const headerEnd = section.lines.indexOf(current.hunks[0][0]);
+    const headerEnd = section.lines.indexOf(currentSplit.hunks[0][0]);
     kept.push({ ...section, lines: [...section.lines.slice(0, headerEnd), ...hunks.flat()] });
   }
   return {
