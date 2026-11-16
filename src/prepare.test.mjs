@@ -377,6 +377,40 @@ describe("preparePullRequest", () => {
     assert.ok(oldBase);
   });
 
+  it("keeps a moved deletion and a changed binary after a rebase", async () => {
+    const space = repos();
+    const oldBase = space.commit({
+      "app.js": "first\nguard\nwork\nsecond\nguard\nwork\n",
+      "image.bin": "\0old",
+    });
+    space.branch("old-feature");
+    const reviewed = space.commit({
+      "app.js": "first\nwork\nsecond\nguard\nwork\n",
+      "image.bin": "\0reviewed",
+    });
+    space.checkout("main");
+    const newBase = space.commit({ "README.md": "main\n" });
+    space.branch("rebased");
+    const finalHead = space.commit({
+      "app.js": "first\nguard\nwork\nsecond\nwork\n",
+      "image.bin": "\0changed",
+    });
+
+    await prepare(
+      space,
+      fakeRest(space, {
+        forcePushes: [reviewed],
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
+      }),
+      { baseSha: newBase, headSha: finalHead },
+    );
+
+    const review = space.read("pr.diff");
+    assert.match(review, /^-guard$/m);
+    assert.match(review, /Binary files a\/image\.bin and b\/image\.bin differ/);
+    assert.ok(oldBase);
+  });
+
   for (const [name, options] of [
     ["the check set changed", { marker: "b".repeat(64) }],
     ["force-push lookup fails", { graphqlError: new Error("unavailable") }],

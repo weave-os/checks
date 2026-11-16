@@ -179,6 +179,14 @@ export async function findRebasedReviewedSha({
   return firstReviewedSha({ rest, repository, candidates, aggregateName, checkDigest, log });
 }
 
+function hunkRange(hunk) {
+  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(hunk[0]);
+  if (match === null) return null;
+  const start = Number(match[1]);
+  const count = match[2] === undefined ? 1 : Number(match[2]);
+  return { start, count };
+}
+
 function splitHunks(section) {
   const header = [];
   const hunks = [];
@@ -191,51 +199,72 @@ function splitHunks(section) {
 }
 
 function sectionFingerprint(section) {
+  const hasHunks = section.lines.some(line => line.startsWith("@@"));
   return section.lines
-    .filter(line => !line.startsWith("index "))
+    .filter(line => !hasHunks || !line.startsWith("index "))
     .map(line => (line.startsWith("@@") ? "@@\n" : line))
     .join("");
 }
 
-function changeCounts(hunks) {
+function hunkBody(hunk, lines) {
+  const range = hunkRange(hunk);
+  if (range === null || lines === null) return null;
+  const firstChanged = range.count === 0 ? range.start + 1 : range.start;
+  const lastChanged = range.count === 0 ? range.start : range.start + range.count - 1;
+  return JSON.stringify([
+    lines[firstChanged - 2] ?? null,
+    hunk.slice(1).join(""),
+    lines[lastChanged] ?? null,
+  ]);
+}
+
+function hunkCounts(hunks, lines) {
   const counts = new Map();
-  for (const line of hunks.flatMap(hunk => hunk.slice(1))) {
-    if (!line.startsWith("+") && !line.startsWith("-")) continue;
-    counts.set(line, (counts.get(line) ?? 0) + 1);
+  for (const body of hunks.map(hunk => hunkBody(hunk, lines))) {
+    if (body !== null) counts.set(body, (counts.get(body) ?? 0) + 1);
   }
   return counts;
 }
 
-function hasNewChange(hunk, previous) {
-  let found = false;
-  for (const line of hunk.slice(1)) {
-    if (line.startsWith("\\")) return true;
-    if (!line.startsWith("+") && !line.startsWith("-")) continue;
-    const count = previous.get(line) ?? 0;
-    if (count === 0) found = true;
-    else previous.set(line, count - 1);
-  }
-  return found;
+function isNewHunk(hunk, previous, lines) {
+  const body = hunkBody(hunk, lines);
+  if (body === null) return true;
+  const count = previous.get(body) ?? 0;
+  if (count === 0) return true;
+  previous.set(body, count - 1);
+  return false;
 }
 
-export function filterRebasedDiff(previousDiff, currentDiff) {
+export function filterRebasedDiff(
+  previousDiff,
+  currentDiff,
+  readPreviousFile = () => null,
+  readCurrentFile = () => null,
+) {
   const previousSections = new Map(
     diffSections(previousDiff).map(section => [section.newPath ?? section.oldPath, section]),
   );
   const currentSections = diffSections(currentDiff);
   const kept = [];
   for (const section of currentSections) {
-    const previous = previousSections.get(section.newPath ?? section.oldPath);
-    if (previous !== undefined && sectionFingerprint(previous) === sectionFingerprint(section))
-      continue;
+    const filePath = section.newPath ?? section.oldPath;
+    const previous = previousSections.get(filePath);
     const current = splitHunks(section);
+    if (
+      previous !== undefined &&
+      current.hunks.length === 0 &&
+      sectionFingerprint(previous) === sectionFingerprint(section)
+    )
+      continue;
     const before = previous === undefined ? null : splitHunks(previous);
     if (before === null || current.hunks.length === 0 || current.header !== before.header) {
       kept.push(section);
       continue;
     }
-    const previousChanges = changeCounts(before.hunks);
-    const hunks = current.hunks.filter(hunk => hasNewChange(hunk, previousChanges));
+    const previousLines = readPreviousFile(filePath)?.split("\n") ?? null;
+    const currentLines = readCurrentFile(filePath)?.split("\n") ?? null;
+    const previousHunks = hunkCounts(before.hunks, previousLines);
+    const hunks = current.hunks.filter(hunk => isNewHunk(hunk, previousHunks, currentLines));
     if (hunks.length === 0) continue;
     const headerEnd = section.lines.indexOf(current.hunks[0][0]);
     kept.push({ ...section, lines: [...section.lines.slice(0, headerEnd), ...hunks.flat()] });
@@ -513,11 +542,16 @@ export async function preparePullRequest({
   let reviewDiff;
   let reviewStat;
   if (rebased !== null) {
+    const readFile = sha => filePath =>
+      git(["show", `${sha}:${filePath}`], { cwd: repoDir, allowFailure: true })?.toString("utf8") ??
+      null;
     const filtered = filterRebasedDiff(
       diff(rebased.previousMergeBaseSha, fullTreePathspecs, rebased.previousHeadSha).toString(
         "utf8",
       ),
       fullDiff.toString("utf8"),
+      readFile(rebased.previousHeadSha),
+      readFile(headSha),
     );
     reviewBaseSha = rebased.previousHeadSha;
     rebased.unchanged = filtered.unchanged;
