@@ -4,13 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import {
-  NEUTRAL_CAUSE,
-  OUTCOME,
-  RESULT_SCHEMA,
-  checkSetDigest,
-  formatReviewedMarker,
-} from "./parse.mjs";
+import { NEUTRAL_CAUSE, OUTCOME, RESULT_SCHEMA, checkSetDigest } from "./parse.mjs";
 import { appendMarker } from "./history.mjs";
 import { readWorkerConfig, runWorker } from "./worker.mjs";
 
@@ -96,7 +90,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
 }
 
 function reviewedMarker(env) {
-  return formatReviewedMarker(HEAD_SHA, checkSetDigest(CHECKS, env.REPO_DIR), MERGE_BASE_SHA);
+  return `reviewed:${HEAD_SHA}:${checkSetDigest(CHECKS, env.REPO_DIR)}:${MERGE_BASE_SHA}`;
 }
 
 function reply(status, body) {
