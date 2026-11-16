@@ -1,0 +1,41 @@
+README.md
+  s_a70217218313e2::t_7a9f4aaea997cd 221-234
+src/worker.mjs
+  s_a70217218313e2::t_02ddf1069ff2e4 114,204,1069,1395
+  s_a70217218313e2::t_61c67af6ed2d1b 407-412,419,427,1186,1374,1417,1419-1423
+action.yml
+  s_a70217218313e2::t_02ddf1069ff2e4 203
+src/worker.test.mjs
+  s_a70217218313e2::t_385aae47cd39a3 658-707
+  s_a70217218313e2::t_02ddf1069ff2e4 18,74,99
+src/prepare.test.mjs
+  s_a70217218313e2::t_f8692cda6e5e4d 450,464,482,489-511
+  s_a70217218313e2::t_00c57643e0f9db 292,294,296,298,300,312-316,319,321,324,328,331,346,348-350,353,355,374,377,379,381,385,393,398-449,451-463,465-481,483-488,512-543,636,652-654
+src/parse.mjs
+  s_a70217218313e2::t_02ddf1069ff2e4 660-667,671
+  s_a70217218313e2::t_f8692cda6e5e4d 668-670
+src/prepare.mjs
+  s_a70217218313e2::t_dbfbe5ff1f17b0 192-193,195-197,199,203
+  s_a70217218313e2::t_385aae47cd39a3 200-202
+  s_a70217218313e2::t_02ddf1069ff2e4 25,114,122,139-140,379,388-389,391-398
+src/parse.test.mjs
+  s_a70217218313e2::t_a52592757c82c0 955
+  s_a70217218313e2::t_f8692cda6e5e4d 26,935-954,956-961
+  s_a70217218313e2::t_8cd362c831ee63 962-963
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c741521b775520c9bf8ac232e18e0c37995d383",
+  "prompts": {},
+  "sessions": {
+    "s_a70217218313e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d151-62a2-7383-af8f-46274747ad2d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Drew Bailey <drew@workweave.ai>"
+    }
+  }
+}
