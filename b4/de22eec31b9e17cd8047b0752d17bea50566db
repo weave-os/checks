@@ -1,0 +1,14 @@
+src/worker.test.mjs
+  h_ab3cb0cf7fa1dd 7,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4de22eec31b9e17cd8047b0752d17bea50566db",
+  "prompts": {},
+  "humans": {
+    "h_ab3cb0cf7fa1dd": {
+      "author": "Drew Bailey <drew@workweave.ai>"
+    }
+  }
+}
