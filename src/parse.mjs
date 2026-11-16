@@ -610,10 +610,9 @@ export function partitionByPullRequestDiff(findings, pullRequestLines) {
 // Renders findings GitHub cannot anchor inline as a review-body section, so a
 // FAIL verdict stays visible on the PR. Suggestion blocks are omitted: they
 // only apply as inline comments.
-export function formatBodyFindings(findings) {
-  if (findings.length === 0) return "";
+export function formatBodyFindings(heading, findings) {
   return [
-    "Findings on lines outside this pull request's diff, where GitHub cannot place an inline comment:",
+    heading,
     ...findings.map(finding => {
       const range =
         finding.start_line < finding.line ?

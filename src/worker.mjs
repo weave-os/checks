@@ -906,7 +906,11 @@ export async function runWorker(config, deps = {}) {
     // all its threads resolve, which must not take these findings with it.
     if (bodyFindings.length > 0) {
       const reason = foldedIntoBody || comments.length === 0 ? [result.reason] : [];
-      await post([title, ...reason, formatBodyFindings(bodyFindings)].join("\n\n"), []);
+      const heading =
+        foldedIntoBody ?
+          "GitHub rejected this review's inline comments, so its findings are listed here:"
+        : "Findings on lines outside this pull request's diff, where GitHub cannot place an inline comment:";
+      await post([title, ...reason, formatBodyFindings(heading, bodyFindings)].join("\n\n"), []);
     }
     return { foldedIntoBody };
   }

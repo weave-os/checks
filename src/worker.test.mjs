@@ -591,6 +591,7 @@ describe("runWorker", () => {
     assert.doesNotMatch(inlineReview.body.body, /Inject the handle/);
     assert.deepEqual(bodyReview.body.comments, []);
     assert.match(bodyReview.body.body, /\*\*`app\/main\.go:3`\*\*\n\nInject the handle\./);
+    assert.match(bodyReview.body.body, /outside this pull request's diff/);
     assert.doesNotMatch(bodyReview.body.body, /```suggestion/);
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "neutral");
@@ -610,6 +611,8 @@ describe("runWorker", () => {
     assert.equal(rejected.body.comments.length, 1);
     assert.deepEqual(retried.body.comments, []);
     assert.match(retried.body.body, /\*\*`app\/main\.go:1`\*\*\n\nRename `one`\./);
+    assert.match(retried.body.body, /GitHub rejected this review's inline comments/);
+    assert.doesNotMatch(retried.body.body, /outside this pull request's diff/);
     const first = outcome.states.find(state => state.check.slug === "first-check");
     assert.equal(first.outcome, OUTCOME.FAIL);
     const final = github.masterPatches().at(-1).body;
