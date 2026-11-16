@@ -1,0 +1,25 @@
+src/prepare.mjs
+  s_a70217218313e2::t_4048f776146ac6 187,209-218,221,223-224,229-231,238-243,250-251,264-267,545,553-554
+  s_a70217218313e2::t_3e1e4758a0d299 202,204,219-220,232-235
+  s_a70217218313e2::t_d92b907da5fa50 182-186,188-189
+  s_a70217218313e2::t_5c347931cb62fc 253-258,546-547
+src/prepare.test.mjs
+  s_a70217218313e2::t_3e1e4758a0d299 380-382,384-387,389-393,395-408,410,412-413
+  s_a70217218313e2::t_d92b907da5fa50 383,388,394,409,411
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "846d74a5cf215588fb487b6d386228364064eefa",
+  "prompts": {},
+  "sessions": {
+    "s_a70217218313e2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d151-62a2-7383-af8f-46274747ad2d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Drew Bailey <drew@workweave.ai>"
+    }
+  }
+}
