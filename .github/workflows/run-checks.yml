@@ -11,6 +11,7 @@ jobs:
     permissions:
       id-token: write
     with:
+      weave-router-url: https://internal.router.workweave.ai
       use-default-checks: true
     secrets:
       weave-router-key: ${{ secrets.WEAVE_ROUTER_KEY }}
