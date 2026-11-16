@@ -32,6 +32,7 @@ import {
   OUTCOME,
   NEUTRAL_CAUSE,
   parseAddedLines,
+  partitionByPullRequestDiff,
   parseCheckFile,
   parseStructuredOutput,
   validateResult,
@@ -483,6 +484,34 @@ describe("parseAddedLines", () => {
     assert.deepEqual([...lines.get("café.md")], [3]);
     assert.deepEqual([...lines.get('quote"slash\\file.go')], [4]);
     assert.deepEqual([...lines.get("space name.go")], [5]);
+  });
+});
+
+describe("partitionByPullRequestDiff", () => {
+  const pullRequestLines = new Map([["foo.go", new Set([10, 11, 12])]]);
+
+  it("keeps a finding inline when its whole range is in the PR diff", () => {
+    const finding = { file: "foo.go", start_line: 10, line: 12, comment: "x", replacement: "y" };
+    assert.deepEqual(partitionByPullRequestDiff([finding], pullRequestLines), {
+      inline: [finding],
+      bodyOnly: [],
+    });
+  });
+
+  it("moves a finding whose line or file is outside the PR diff to the body", () => {
+    const outsideLine = { file: "foo.go", start_line: 98, line: 98, comment: "x" };
+    const outsideFile = { file: "bar.go", start_line: 1, line: 1, comment: "y" };
+    assert.deepEqual(partitionByPullRequestDiff([outsideLine, outsideFile], pullRequestLines), {
+      inline: [],
+      bodyOnly: [outsideLine, outsideFile],
+    });
+  });
+
+  it("reduces a range only partly in the PR diff to prose on its end line", () => {
+    const finding = { file: "foo.go", start_line: 8, line: 11, comment: "x", replacement: "y" };
+    assert.deepEqual(partitionByPullRequestDiff([finding], pullRequestLines).inline, [
+      { file: "foo.go", start_line: 11, line: 11, comment: "x" },
+    ]);
   });
 });
 

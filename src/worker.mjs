@@ -51,9 +51,11 @@ import {
   REVIEW_EVENT,
   checkSetDigest,
   everyCheckReviewed,
+  formatBodyFindings,
   formatReviewComment,
   formatReviewedMarker,
   parseAddedLines,
+  partitionByPullRequestDiff,
   publicOutcome,
 } from "./parse.mjs";
 import {
@@ -837,7 +839,13 @@ export async function runWorker(config, deps = {}) {
   async function applyFindings(check, checkThreads, result, recordAttempt) {
     const dedup = await judgeDuplicates(check, checkThreads, result.accepted, recordAttempt);
     const dedupDropped = result.accepted.length - dedup.accepted.length;
-    const comments = dedup.accepted.map(suggestion => {
+    // Anchors were validated against the review scope, which may be
+    // incremental; GitHub resolves them against the PR's merge-base diff.
+    const { inline, bodyOnly } = partitionByPullRequestDiff(
+      dedup.accepted,
+      parseAddedLines(CHECK_SCOPES.get(check.slug).fullDiff),
+    );
+    const comments = inline.map(suggestion => {
       const comment = formatReviewComment(suggestion);
       return { ...comment, body: MARKERS.append(comment.body, check.slug) };
     });
@@ -847,7 +855,9 @@ export async function runWorker(config, deps = {}) {
       // The surviving findings, unformatted, for a summary that lists them
       // itself when inline comments are off.
       findings: dedup.accepted,
+      inlineFindings: inline,
       comments,
+      bodyFindings: bodyOnly,
       dedupDropped,
       cost: totalCost([result.cost, dedup.cost]),
       duration: totalDuration([result.duration, dedup.duration]),
@@ -855,7 +865,9 @@ export async function runWorker(config, deps = {}) {
   }
 
   async function postReview(check, result) {
-    if (result.comments.length === 0) return;
+    if (result.comments.length === 0 && result.bodyFindings.length === 0) {
+      return { foldedIntoBody: false };
+    }
     // GitHub rejects a review whose line comments omit `side` (and multi-line
     // comments omit `start_side`). All the comments here anchor to the PR's
     // HEAD (= the check's `commit_id` and RIGHT in line-colloquial terms), so
@@ -866,14 +878,30 @@ export async function runWorker(config, deps = {}) {
       side: "RIGHT",
       ...(comment.start_line !== undefined ? { start_side: "RIGHT" } : {}),
     }));
-    await github(HTTP_METHOD.POST, `repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews`, {
-      commit_id: HEAD_SHA,
-      // Use a COMMENT review so the check run's own conclusion, rather than
-      // GitHub's separate review-approval gate, controls merge requirements.
-      event: REVIEW_EVENT.COMMENT,
-      body: `**${childCheckRunName(BRANDING, check)}**\n\n${result.reason}`,
-      comments,
-    });
+    const reviewBody = bodyFindings =>
+      [`**${childCheckRunName(BRANDING, check)}**`, result.reason, formatBodyFindings(bodyFindings)]
+        .filter(part => part !== "")
+        .join("\n\n");
+    const post = (body, reviewComments) =>
+      github(HTTP_METHOD.POST, `repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews`, {
+        commit_id: HEAD_SHA,
+        // Use a COMMENT review so the check run's own conclusion, rather than
+        // GitHub's separate review-approval gate, controls merge requirements.
+        event: REVIEW_EVENT.COMMENT,
+        body,
+        comments: reviewComments,
+      });
+    try {
+      await post(reviewBody(result.bodyFindings), comments);
+    } catch (error) {
+      // A 422 is GitHub refusing an inline anchor ("Line could not be
+      // resolved"), which rejects the whole review. Keep the findings visible
+      // by posting every one of them in the review body instead.
+      if (comments.length === 0 || !/: 422 /.test(error.message)) throw error;
+      await post(reviewBody([...result.inlineFindings, ...result.bodyFindings]), []);
+      return { foldedIntoBody: true };
+    }
+    return { foldedIntoBody: false };
   }
 
   async function completeCheckRun(state) {
@@ -906,7 +934,7 @@ export async function runWorker(config, deps = {}) {
     const tallyLine =
       result.outcome === OUTCOME.NEUTRAL ?
         ""
-      : `${result.comments.length} findings posted; ${result.proseFallbacks.length} converted to prose before duplicate filtering because an unsafe range or replacement was removed; ${result.rejected.length} dropped after anchor validation; ${result.dedupDropped} dropped as duplicates of already-flagged comments.`;
+      : `${result.comments.length} findings posted inline; ${result.bodyFindings.length} posted in the review body because GitHub cannot anchor them to the PR diff; ${result.proseFallbacks.length} converted to prose before duplicate filtering because an unsafe range or replacement was removed; ${result.rejected.length} dropped after anchor validation; ${result.dedupDropped} dropped as duplicates of already-flagged comments.`;
     const conditionalLines = [
       result.outcome === OUTCOME.NEUTRAL ? `Error: ${result.error}` : result.reason,
       result.outcome !== OUTCOME.NEUTRAL ? tallyLine : null,
@@ -1005,8 +1033,22 @@ export async function runWorker(config, deps = {}) {
         `**${BRANDING.aggregateName}** — ${pass} passed · ${fail} flagged · ${neutral} neutral · ${running} running · ${queued} queued — ${formatUsd(totalCostUsd)} total (${PROVIDER_IMPL.costLabel}), ${formatDuration(totalDurationMs)}`
       : `**${BRANDING.aggregateName}** — ${pass} passed · ${fail} flagged · ${neutral} neutral · ${running} running · ${queued} queued`;
 
+    // A finding or unusable model output is not an infrastructure failure.
+    // Keep those neutral; fail only when a check hit an infrastructure error
+    // (or has an unknown/incomplete state, which defaults to infrastructure).
+    const incompleteReviews = all.filter(isIncompleteReview);
+    // The table shows such a check as neutral, like a finding, so name what
+    // turned the aggregate red.
+    const failureExplanation =
+      final && incompleteReviews.length > 0 ?
+        `**Failed:** ${incompleteReviews.length} check(s) could not complete a review: ${incompleteReviews
+          .map(state => `${state.check.name} (${markdownCell(state.note ?? "did not finish")})`)
+          .join("; ")}`
+      : null;
+
     const summary = [
       header,
+      ...(failureExplanation === null ? [] : ["", failureExplanation]),
       "",
       "| Check | Status | Cost | Duration | Current detail |",
       "| --- | --- | --- | --- | --- |",
@@ -1026,13 +1068,15 @@ export async function runWorker(config, deps = {}) {
     // an internal tally for ops, not the GitHub conclusion. "fail" here means
     // "agent verdict was FAIL", which now publishes as `neutral` on the PR
     // status row but is still useful to enumerate when scanning the table.
+    const erroredTally =
+      final && incompleteReviews.length > 0 ? ` · ${incompleteReviews.length} errored` : "";
     const payload = {
       output: {
         title:
           final ?
             hasCompleteMetrics ?
-              `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${formatUsd(totalCostUsd)}`
-            : `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral`
+              `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral${erroredTally} · ${formatUsd(totalCostUsd)}`
+            : `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral${erroredTally}`
           : hasCompleteMetrics ?
             `${BRANDING.aggregateName}: ${pass} pass · ${fail} flagged · ${neutral} neutral · ${running} running · ${formatUsd(totalCostUsd)}`
           : `${BRANDING.aggregateName}: ${running} running · ${queued} queued`,
@@ -1041,17 +1085,9 @@ export async function runWorker(config, deps = {}) {
     };
     if (final) {
       payload.status = CHECK_RUN_STATUS.COMPLETED;
-      // A finding or unusable model output is not an infrastructure failure.
-      // Keep those neutral; fail only when a check hit an infrastructure error
-      // (or has an unknown/incomplete state, which defaults to infrastructure).
-      const infrastructureFailure = all.some(state =>
-        state.outcome === OUTCOME.NEUTRAL ?
-          state.cause !== NEUTRAL_CAUSE.INVALID_OUTPUT
-        : state.outcome !== OUTCOME.PASS && state.outcome !== OUTCOME.FAIL,
-      );
       payload.conclusion =
         pass === all.length && all.length > 0 ? GITHUB_CONCLUSION.SUCCESS
-        : infrastructureFailure ? GITHUB_CONCLUSION.FAILURE
+        : incompleteReviews.length > 0 ? GITHUB_CONCLUSION.FAILURE
         : GITHUB_CONCLUSION.NEUTRAL;
       // This marker records which check set completed a usable review, not
       // merely the head commit. Findings count as completed reviews; any miss,
@@ -1216,7 +1252,8 @@ export async function runWorker(config, deps = {}) {
         result = await applyFindings(check, checkThreads, result, (label, invocation) =>
           recordAttempt(TRANSCRIPT_PHASE.DEDUP, label, invocation),
         );
-        if (result.outcome === OUTCOME.FAIL && result.comments.length === 0) {
+        const postedCount = result.comments.length + result.bodyFindings.length;
+        if (result.outcome === OUTCOME.FAIL && postedCount === 0) {
           // Every accepted suggestion turned out to duplicate an already-flagged
           // comment (open or dismissed) -- nothing new was posted, so the check
           // found no new violation. The still-open reconciliation below turns
@@ -1228,7 +1265,7 @@ export async function runWorker(config, deps = {}) {
             outcome: OUTCOME.PASS,
             reason: `No new violations in this diff: all ${result.dedupDropped} finding(s) were already flagged on this PR.`,
           };
-        } else if (result.outcome === OUTCOME.FAIL && result.comments.length > 0) {
+        } else if (result.outcome === OUTCOME.FAIL && postedCount > 0) {
           // applyFindings() just made its own Claude call (the dedup judge), so
           // re-check the live head again rather than trusting the check made
           // before applyResolutions above.
@@ -1238,7 +1275,14 @@ export async function runWorker(config, deps = {}) {
             );
           }
           try {
-            await postReview(check, result);
+            const { foldedIntoBody } = await postReview(check, result);
+            if (foldedIntoBody) {
+              result = {
+                ...result,
+                comments: [],
+                bodyFindings: [...result.inlineFindings, ...result.bodyFindings],
+              };
+            }
           } catch (error) {
             // Preserve the cost/duration already spent on the main review and
             // dedup judge above -- a failure to post shouldn't erase spend that
@@ -1520,13 +1564,21 @@ function positiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function isIncompleteReview(state) {
+  return state.outcome === OUTCOME.NEUTRAL ?
+      state.cause !== NEUTRAL_CAUSE.INVALID_OUTPUT
+    : state.outcome !== OUTCOME.PASS && state.outcome !== OUTCOME.FAIL;
+}
+
 function statusLabel(state) {
   if (state.status === STATUS.QUEUED) return "queued";
   if (state.status === STATUS.RUNNING) return "running";
   // No "fail" label anymore -- a non-PASS outcome (FAIL verdict,
   // operational error) renders as neutral on the summary table too, so
-  // the table agrees with the per-check run's conclusion.
-  return state.outcome === OUTCOME.PASS ? "✓ pass" : "· neutral";
+  // the table agrees with the per-check run's conclusion. An incomplete
+  // review says so, since it alone fails the aggregate.
+  if (state.outcome === OUTCOME.PASS) return "✓ pass";
+  return isIncompleteReview(state) ? "· neutral (error)" : "· neutral";
 }
 
 function markdownCell(value) {

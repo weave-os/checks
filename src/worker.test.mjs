@@ -115,8 +115,12 @@ function fakeGitHub({
   failThreads = false,
   failResolve = false,
   reviewStatus = null,
+  // Per-POST statuses for the review endpoint, consumed in order; once empty,
+  // `reviewStatus` applies.
+  reviewStatuses = [],
   liveHead = HEAD_SHA,
 } = {}) {
+  const pendingReviewStatuses = [...reviewStatuses];
   const calls = [];
   let nextId = 2000;
   const fetchFn = async (url, init = {}) => {
@@ -143,8 +147,14 @@ function fakeGitHub({
       }
       return reply(200, { data: {} });
     }
-    if (method === "POST" && route === `repos/${REPO}/pulls/7/reviews` && reviewStatus !== null) {
-      return reply(reviewStatus, { message: "review validation failed" });
+    if (method === "POST" && route === `repos/${REPO}/pulls/7/reviews`) {
+      const status = pendingReviewStatuses.shift() ?? reviewStatus;
+      if (status !== null) {
+        return reply(status, {
+          message: "Unprocessable Entity",
+          errors: ["Line could not be resolved"],
+        });
+      }
     }
     if (method === "POST" && route === `repos/${REPO}/check-runs`) {
       nextId += 1;
@@ -476,6 +486,13 @@ describe("runWorker", () => {
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "failure");
     assert.equal(final.external_id, undefined);
+    // The table shows the miss as neutral, so the aggregate names it.
+    assert.match(final.output.title, /· 1 errored/);
+    assert.match(
+      final.output.summary,
+      /\*\*Failed:\*\* 1 check\(s\) could not complete a review: First Check \(Claude CLI exited 1\)/,
+    );
+    assert.match(final.output.summary, /\| First Check \| · neutral \(error\) \|/);
     assert.equal(
       outcome.states.find(state => state.check.slug === "first-check").cause,
       NEUTRAL_CAUSE.INFRASTRUCTURE,
@@ -532,6 +549,68 @@ describe("runWorker", () => {
       outcome.states.find(state => state.check.slug === "first-check").cause,
       NEUTRAL_CAUSE.INFRASTRUCTURE,
     );
+  });
+
+  it("posts a finding outside the PR diff in the review body instead of inline", async () => {
+    // Incremental review scope: line 3 was added since the last reviewed
+    // commit, but a later commit restored it to the merge base's content, so
+    // GitHub's PR diff (lines 1-2) cannot anchor a comment there.
+    const incremental = DIFF.replace(
+      "@@ -0,0 +1,2 @@\n+one\n+two",
+      "@@ -0,0 +1,3 @@\n+one\n+two\n+three",
+    );
+    const { env } = workerEnv({}, { diff: incremental });
+    writeFileSync(env.FULL_DIFF_PATH, DIFF);
+    const github = fakeGitHub();
+
+    await run(env, github, async ({ check }) =>
+      check.slug === "first-check" ?
+        {
+          ...fail(),
+          accepted: [
+            { file: "app/main.go", start_line: 1, line: 1, comment: "Rename `one`." },
+            {
+              file: "app/main.go",
+              start_line: 3,
+              line: 3,
+              comment: "Inject the handle.",
+              replacement: "THREE",
+            },
+          ],
+        }
+      : pass(),
+    );
+
+    const [review] = github.reviews();
+    assert.deepEqual(
+      review.body.comments.map(comment => [comment.path, comment.line]),
+      [["app/main.go", 1]],
+    );
+    assert.match(review.body.body, /\*\*`app\/main\.go:3`\*\*\n\nInject the handle\./);
+    assert.doesNotMatch(review.body.body, /```suggestion/);
+    const final = github.masterPatches().at(-1).body;
+    assert.equal(final.conclusion, "neutral");
+    assert.equal(final.external_id, reviewedMarker(env));
+    assert.match(final.output.title, /1 flagged/);
+  });
+
+  it("refolds every finding into the review body when GitHub cannot resolve an inline line", async () => {
+    const { env } = workerEnv();
+    const github = fakeGitHub({ reviewStatuses: [422] });
+
+    const outcome = await run(env, github, async ({ check }) =>
+      check.slug === "first-check" ? fail() : pass(),
+    );
+
+    const [rejected, retried] = github.reviews();
+    assert.equal(rejected.body.comments.length, 1);
+    assert.deepEqual(retried.body.comments, []);
+    assert.match(retried.body.body, /\*\*`app\/main\.go:1`\*\*\n\nRename `one`\./);
+    const first = outcome.states.find(state => state.check.slug === "first-check");
+    assert.equal(first.outcome, OUTCOME.FAIL);
+    const final = github.masterPatches().at(-1).body;
+    assert.equal(final.conclusion, "neutral");
+    assert.equal(final.external_id, reviewedMarker(env));
   });
 
   it("fails the aggregate when a non-empty diff has no configured checks", async () => {

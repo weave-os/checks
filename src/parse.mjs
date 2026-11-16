@@ -570,6 +570,60 @@ export function validateResult(result, addedLines) {
   };
 }
 
+// Splits validated findings by whether GitHub can anchor them inline. The
+// review scope can be incremental (last reviewed..HEAD), so a line it adds can
+// be unchanged relative to the merge base -- e.g. a later commit reverted an
+// earlier one -- and GitHub's PR diff, which a review comment must land on,
+// does not contain it. Such a finding moves to the review body instead of
+// 422ing the whole review; a range only partly in the PR diff keeps its end
+// line as advisory prose, matching validateResult's fallback.
+export function partitionByPullRequestDiff(findings, pullRequestLines) {
+  const inline = [];
+  const bodyOnly = [];
+  for (const finding of findings) {
+    const lines = pullRequestLines.get(finding.file);
+    if (lines === undefined || !lines.has(finding.line)) {
+      bodyOnly.push(finding);
+      continue;
+    }
+    let rangeIsValid = true;
+    for (let n = finding.start_line; n <= finding.line; n += 1) {
+      if (!lines.has(n)) {
+        rangeIsValid = false;
+        break;
+      }
+    }
+    inline.push(
+      rangeIsValid ? finding : (
+        {
+          file: finding.file,
+          start_line: finding.line,
+          line: finding.line,
+          comment: finding.comment,
+        }
+      ),
+    );
+  }
+  return { inline, bodyOnly };
+}
+
+// Renders findings GitHub cannot anchor inline as a review-body section, so a
+// FAIL verdict stays visible on the PR. Suggestion blocks are omitted: they
+// only apply as inline comments.
+export function formatBodyFindings(findings) {
+  if (findings.length === 0) return "";
+  return [
+    "Findings on lines outside this pull request's diff, where GitHub cannot place an inline comment:",
+    ...findings.map(finding => {
+      const range =
+        finding.start_line < finding.line ?
+          `${finding.start_line}-${finding.line}`
+        : `${finding.line}`;
+      return `**\`${finding.file}:${range}\`**\n\n${finding.comment}`;
+    }),
+  ].join("\n\n");
+}
+
 // Formats a suggestion as a GitHub review comment. A `replacement` becomes a
 // committable ```suggestion block; without one the comment is advisory prose.
 export function formatReviewComment(suggestion) {
