@@ -878,10 +878,6 @@ export async function runWorker(config, deps = {}) {
       side: "RIGHT",
       ...(comment.start_line !== undefined ? { start_side: "RIGHT" } : {}),
     }));
-    const reviewBody = bodyFindings =>
-      [`**${childCheckRunName(BRANDING, check)}**`, result.reason, formatBodyFindings(bodyFindings)]
-        .filter(part => part !== "")
-        .join("\n\n");
     const post = (body, reviewComments) =>
       github(HTTP_METHOD.POST, `repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews`, {
         commit_id: HEAD_SHA,
@@ -891,17 +887,28 @@ export async function runWorker(config, deps = {}) {
         body,
         comments: reviewComments,
       });
-    try {
-      await post(reviewBody(result.bodyFindings), comments);
-    } catch (error) {
-      // A 422 is GitHub refusing an inline anchor ("Line could not be
-      // resolved"), which rejects the whole review. Keep the findings visible
-      // by posting every one of them in the review body instead.
-      if (comments.length === 0 || !/: 422 /.test(error.message)) throw error;
-      await post(reviewBody([...result.inlineFindings, ...result.bodyFindings]), []);
-      return { foldedIntoBody: true };
+    const title = `**${childCheckRunName(BRANDING, check)}**`;
+    let bodyFindings = result.bodyFindings;
+    let foldedIntoBody = false;
+    if (comments.length > 0) {
+      try {
+        await post(`${title}\n\n${result.reason}`, comments);
+      } catch (error) {
+        // A 422 is GitHub refusing an inline anchor ("Line could not be
+        // resolved"), which rejects the whole review. Keep the findings
+        // visible by posting every one of them in the review body instead.
+        if (!/: 422 /.test(error.message)) throw error;
+        bodyFindings = [...result.inlineFindings, ...result.bodyFindings];
+        foldedIntoBody = true;
+      }
     }
-    return { foldedIntoBody: false };
+    // Body findings get their own thread-less review: a review is hidden once
+    // all its threads resolve, which must not take these findings with it.
+    if (bodyFindings.length > 0) {
+      const reason = foldedIntoBody || comments.length === 0 ? [result.reason] : [];
+      await post([title, ...reason, formatBodyFindings(bodyFindings)].join("\n\n"), []);
+    }
+    return { foldedIntoBody };
   }
 
   async function completeCheckRun(state) {

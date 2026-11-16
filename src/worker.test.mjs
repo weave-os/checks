@@ -581,13 +581,17 @@ describe("runWorker", () => {
       : pass(),
     );
 
-    const [review] = github.reviews();
+    // The body finding is a separate thread-less review, so resolving the
+    // inline thread (which hides its review) cannot hide it.
+    const [inlineReview, bodyReview] = github.reviews();
     assert.deepEqual(
-      review.body.comments.map(comment => [comment.path, comment.line]),
+      inlineReview.body.comments.map(comment => [comment.path, comment.line]),
       [["app/main.go", 1]],
     );
-    assert.match(review.body.body, /\*\*`app\/main\.go:3`\*\*\n\nInject the handle\./);
-    assert.doesNotMatch(review.body.body, /```suggestion/);
+    assert.doesNotMatch(inlineReview.body.body, /Inject the handle/);
+    assert.deepEqual(bodyReview.body.comments, []);
+    assert.match(bodyReview.body.body, /\*\*`app\/main\.go:3`\*\*\n\nInject the handle\./);
+    assert.doesNotMatch(bodyReview.body.body, /```suggestion/);
     const final = github.masterPatches().at(-1).body;
     assert.equal(final.conclusion, "neutral");
     assert.equal(final.external_id, reviewedMarker(env));
