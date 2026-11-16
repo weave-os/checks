@@ -111,6 +111,7 @@ export function readWorkerConfig(env) {
   }
   return {
     headSha: required("HEAD_SHA"),
+    mergeBaseSha: required("MERGE_BASE_SHA"),
     repoDir: required("REPO_DIR"),
     token: required("WEAVE_CHECKS_APP_TOKEN"),
     tempDir: required("WEAVE_CHECKS_TEMP_DIR"),
@@ -200,6 +201,7 @@ export async function runWorker(config, deps = {}) {
   } = deps;
   const {
     headSha: HEAD_SHA,
+    mergeBaseSha: MERGE_BASE_SHA,
     repoDir: REPO_DIR,
     token: TOKEN,
     tempDir: TEMP_DIR,
@@ -402,13 +404,19 @@ export async function runWorker(config, deps = {}) {
     );
   }
 
+  function unchangedNote(check) {
+    return check.files === undefined ?
+        "No changes since the last full review."
+      : `No changed files match ${check.files}.`;
+  }
+
   // Builds the in-memory state table every other function reads/writes. Every
   // check starts queued; the pool below takes them in order.
   function buildStates() {
     return new Map(
       CHECKS.map(check => {
         const scope = CHECK_SCOPES.get(check.slug);
-        const skipped = check.files !== undefined && scope.diff === "";
+        const skipped = scope.diff === "";
         return [
           check.slug,
           {
@@ -416,7 +424,7 @@ export async function runWorker(config, deps = {}) {
             status: skipped ? STATUS.COMPLETE : STATUS.QUEUED,
             outcome: skipped ? OUTCOME.PASS : null,
             cause: null,
-            note: skipped ? `No changed files match ${check.files}.` : "Waiting for an agent slot.",
+            note: skipped ? unchangedNote(check) : "Waiting for an agent slot.",
             checkRunId: null,
             cost: 0,
             durationMs: 0,
@@ -1058,7 +1066,7 @@ export async function runWorker(config, deps = {}) {
       // including invalid model output, withholds it so the next run widens back
       // to the merge base.
       if (everyCheckReviewed(all)) {
-        payload.external_id = formatReviewedMarker(HEAD_SHA, CHECK_DIGEST);
+        payload.external_id = formatReviewedMarker(HEAD_SHA, CHECK_DIGEST, MERGE_BASE_SHA);
       }
     }
     await github(HTTP_METHOD.PATCH, checkRunPath(MASTER_CHECK_RUN_ID), payload);
@@ -1175,7 +1183,7 @@ export async function runWorker(config, deps = {}) {
         checkScope.diff === "" ?
           Promise.resolve({
             outcome: OUTCOME.PASS,
-            reason: `No changed files match ${check.files}.`,
+            reason: unchangedNote(check),
             accepted: [],
             proseFallbacks: [],
             rejected: [],
@@ -1363,19 +1371,13 @@ export async function runWorker(config, deps = {}) {
   }
 
   try {
-    if (DIFF.trim() === "") {
+    if (FULL_DIFF.trim() === "") {
       // Every path this PR touches is excluded by the checks directory's ignore
       // file (PR preparation applies it to `git diff` itself), so there is
       // nothing for any check to look at. Close the aggregate green and create
       // no per-check runs: queueing the full matrix here would pay for every
       // check to conclude, separately, that an empty diff contains no
       // violations.
-      //
-      // An incremental review base cannot reach this branch with threads left
-      // to resolve: PR preparation widens the review scope back to the merge
-      // base whenever it would otherwise hand us an empty diff over a
-      // non-empty PR, precisely so skipping the checks never also skips the
-      // resolution judge.
       //
       // The aggregate is the only run branch protection waits on, so publishing
       // it as `success` here is what unblocks the PR -- the per-check runs it
@@ -1390,7 +1392,7 @@ export async function runWorker(config, deps = {}) {
         // unread, because there was nothing to read. Withholding the marker
         // would let an ignored-paths-only push pin the review base until some
         // later run happened to re-establish it.
-        external_id: formatReviewedMarker(HEAD_SHA, CHECK_DIGEST),
+        external_id: formatReviewedMarker(HEAD_SHA, CHECK_DIGEST, MERGE_BASE_SHA),
         output: {
           title: `${BRANDING.aggregateName}: no reviewable changes`,
           summary:
@@ -1412,9 +1414,13 @@ export async function runWorker(config, deps = {}) {
 
     const rawThreadNodes = await fetchAllReviewThreads();
     for (const state of states.values()) {
-      if (state.status !== STATUS.COMPLETE || state.check.files === undefined) continue;
+      if (state.status !== STATUS.COMPLETE) continue;
       const hasOpenThreads = threadsForCheck(rawThreadNodes, state.check.slug, MARKERS)
-        .filter(thread => thread.path !== null && matchesFileGlob(thread.path, state.check.files))
+        .filter(
+          thread =>
+            state.check.files === undefined ||
+            (thread.path !== null && matchesFileGlob(thread.path, state.check.files)),
+        )
         .some(thread => !isSettled(thread));
       if (hasOpenThreads) {
         state.status = STATUS.QUEUED;

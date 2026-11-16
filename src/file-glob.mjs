@@ -126,7 +126,7 @@ function pathsFromDiffHeader(line) {
   return [raw.slice(2, separator), raw.slice(separator + 3)];
 }
 
-function diffSections(diff) {
+export function diffSections(diff) {
   const sections = [];
   let current = null;
   let inHunk = false;
@@ -151,7 +151,7 @@ function diffSections(diff) {
   return sections;
 }
 
-function statForSection(section, filePath) {
+export function statForSection(section, filePath) {
   let additions = 0;
   let deletions = 0;
   for (const line of section.lines) {

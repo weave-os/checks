@@ -218,20 +218,20 @@ ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 
 #### Inputs
 
-| Input                 | Default         | Purpose                                                                                                  |
-| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
-| `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                            |
-| `weave-router-url`    | production URL  | Router host URL for `weave-router`; defaults to `https://router.weaveos.com`.                            |
-| `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
-| `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
-| `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
-| `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
-| `concurrency`         | `16`            | Checks run at once.                                                                                      |
-| `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                    |
-| `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                        |
-| `upload-diagnostics`  | `false`         | Upload prompts and transcripts as a workflow artifact.                                                   |
-| `runs-on`             | `ubuntu-latest` | Runner label for the job.                                                                                |
-| `timeout-minutes`     | `30`            | Job timeout.                                                                                             |
+| Input                 | Default         | Purpose                                                                                                                                                                   |
+| --------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`            | `weave-router`  | `weave-router`, or `anthropic` (direct or any Anthropic-compatible endpoint).                                                                                             |
+| `weave-router-url`    | production URL  | Router host URL for `weave-router`; defaults to `https://router.weaveos.com`.                                                                                             |
+| `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                                                                                             |
+| `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                                                                                            |
+| `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                                                                                        |
+| `diff-base`           | `incremental`   | Incremental review after a fully reviewed ancestor; after a rebase, only files whose PR change differs are reviewed, in full. `merge-base` reviews the full PR every run. |
+| `concurrency`         | `16`            | Checks run at once.                                                                                                                                                       |
+| `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                                                                                     |
+| `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                                                                                         |
+| `upload-diagnostics`  | `false`         | Upload prompts and transcripts as a workflow artifact.                                                                                                                    |
+| `runs-on`             | `ubuntu-latest` | Runner label for the job.                                                                                                                                                 |
+| `timeout-minutes`     | `30`            | Job timeout.                                                                                                                                                              |
 
 #### Secrets
 

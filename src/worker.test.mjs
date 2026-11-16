@@ -4,17 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import {
-  NEUTRAL_CAUSE,
-  OUTCOME,
-  RESULT_SCHEMA,
-  checkSetDigest,
-  formatReviewedMarker,
-} from "./parse.mjs";
+import { NEUTRAL_CAUSE, OUTCOME, RESULT_SCHEMA, checkSetDigest } from "./parse.mjs";
 import { appendMarker } from "./history.mjs";
 import { readWorkerConfig, runWorker } from "./worker.mjs";
 
 const HEAD_SHA = "a".repeat(40);
+const MERGE_BASE_SHA = "c".repeat(40);
 const REPO = "acme/widgets";
 
 const DIFF = [
@@ -70,6 +65,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
     root,
     env: {
       HEAD_SHA,
+      MERGE_BASE_SHA,
       REPO_DIR: repoDir,
       WEAVE_CHECKS_APP_TOKEN: "ghs_test",
       WEAVE_CHECKS_TEMP_DIR: path.join(root, "temp"),
@@ -94,7 +90,7 @@ function workerEnv(overrides = {}, { diff = DIFF } = {}) {
 }
 
 function reviewedMarker(env) {
-  return formatReviewedMarker(HEAD_SHA, checkSetDigest(CHECKS, env.REPO_DIR));
+  return `reviewed:${HEAD_SHA}:${checkSetDigest(CHECKS, env.REPO_DIR)}:${MERGE_BASE_SHA}`;
 }
 
 function reply(status, body) {
@@ -651,6 +647,56 @@ describe("runWorker", () => {
       structured_output: structuredOutput,
       duration_ms: 10,
     },
+  });
+
+  it("skips every check when nothing changed since the last full review", async () => {
+    const { env } = workerEnv();
+    writeFileSync(env.DIFF_PATH, "");
+    writeFileSync(env.STAT_PATH, "");
+    const github = fakeGitHub();
+
+    const outcome = await run(env, github, async () => {
+      throw new Error("no check should review an unchanged PR");
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(github.childRuns().length, 0);
+    const final = github.masterPatches().at(-1);
+    assert.equal(final.body.conclusion, "success");
+    assert.equal(final.body.external_id, reviewedMarker(env));
+    assert.match(final.body.output.summary, /No changes since the last full review\./);
+  });
+
+  it("only judges open threads when nothing changed since the last full review", async () => {
+    const { env } = workerEnv();
+    writeFileSync(env.DIFF_PATH, "");
+    writeFileSync(env.STAT_PATH, "");
+    const github = fakeGitHub({ threads: [openThread("first-check")] });
+    const judged = [];
+
+    const outcome = await run(
+      env,
+      github,
+      async () => {
+        throw new Error("no check should review an unchanged PR");
+      },
+      {
+        runAgent: async options => {
+          judged.push(options.suffix);
+          return judgeInvocation({
+            resolutions: [{ thread_id: "T-open", resolved: true, evidence: "No longer applies." }],
+          });
+        },
+      },
+    );
+
+    assert.equal(outcome.ok, true);
+    assert.deepEqual(judged, ["resolve"]);
+    assert.equal(github.childRuns().length, 1);
+    assert.ok(
+      github.calls.some(c => c.route === "graphql" && c.body.query.includes("resolveReviewThread")),
+    );
+    assert.equal(github.masterPatches().at(-1).body.external_id, reviewedMarker(env));
   });
 
   it("resolves a fixed thread with an audit reply under the configured marker", async () => {
