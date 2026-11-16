@@ -22,7 +22,7 @@ import path from "node:path";
 
 import { diffSections, statForSection } from "./file-glob.mjs";
 import { git as defaultGit } from "./git.mjs";
-import { formatReviewedMarker } from "./parse.mjs";
+import { parseReviewedMarker } from "./parse.mjs";
 
 // How far back through the PR's commits to look for the last fully reviewed
 // one. Each candidate is one check-runs lookup; a push that was cancelled or
@@ -111,7 +111,7 @@ export async function findLastReviewedSha({
     log(`Could not list PR commits (${error.message}); reviewing from the merge base.`);
     return null;
   }
-  return firstReviewedSha({
+  const reviewed = await firstReviewedSha({
     rest,
     repository,
     candidates: candidates.slice(0, maxCandidates),
@@ -119,6 +119,7 @@ export async function findLastReviewedSha({
     checkDigest,
     log,
   });
+  return reviewed?.sha ?? null;
 }
 
 async function firstReviewedSha({ rest, repository, candidates, aggregateName, checkDigest, log }) {
@@ -135,7 +136,8 @@ async function firstReviewedSha({ rest, repository, candidates, aggregateName, c
       );
       return null;
     }
-    if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha, checkDigest)) return sha;
+    const marker = parseReviewedMarker(runs?.check_runs?.[0]?.external_id, sha, checkDigest);
+    if (marker !== null) return { sha, mergeBaseSha: marker.mergeBaseSha };
   }
   return null;
 }
@@ -179,25 +181,6 @@ export async function findRebasedReviewedSha({
   return firstReviewedSha({ rest, repository, candidates, aggregateName, checkDigest, log });
 }
 
-function hunkRange(hunk) {
-  const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(hunk[0]);
-  if (match === null) return null;
-  const start = Number(match[1]);
-  const count = match[2] === undefined ? 1 : Number(match[2]);
-  return { start, count };
-}
-
-function splitHunks(section) {
-  const header = [];
-  const hunks = [];
-  for (const line of section.lines) {
-    if (line.startsWith("@@")) hunks.push([line]);
-    else if (hunks.length === 0) header.push(line);
-    else hunks.at(-1).push(line);
-  }
-  return { header: header.filter(line => !line.startsWith("index ")).join(""), hunks };
-}
-
 function sectionFingerprint(section) {
   const hasHunks = section.lines.some(line => line.startsWith("@@"));
   return section.lines
@@ -206,77 +189,18 @@ function sectionFingerprint(section) {
     .join("");
 }
 
-function hunkBody(hunk, lines) {
-  const range = hunkRange(hunk);
-  if (range === null || lines === null) return null;
-  const firstChanged = range.count === 0 ? range.start + 1 : range.start;
-  const lastChanged = range.count === 0 ? range.start : range.start + range.count - 1;
-  return JSON.stringify([
-    lines[firstChanged - 2] ?? null,
-    hunk.slice(1).join(""),
-    lines[lastChanged] ?? null,
-  ]);
-}
-
-function hunkCounts(hunks, lines) {
-  const counts = new Map();
-  for (const body of hunks.map(hunk => hunkBody(hunk, lines))) {
-    if (body !== null) counts.set(body, (counts.get(body) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function isNewHunk(hunk, previousCounts, lines) {
-  const body = hunkBody(hunk, lines);
-  if (body === null) return true;
-  const count = previousCounts.get(body) ?? 0;
-  if (count === 0) return true;
-  previousCounts.set(body, count - 1);
-  return false;
-}
-
-export function filterRebasedDiff(
-  previousDiff,
-  currentDiff,
-  readPreviousFile = () => null,
-  readCurrentFile = () => null,
-) {
-  const previousSections = new Map(
-    diffSections(previousDiff).map(section => [section.newPath ?? section.oldPath, section]),
-  );
+export function filterRebasedDiff(previousDiff, currentDiff) {
+  const previousFingerprints = new Set(diffSections(previousDiff).map(sectionFingerprint));
   const currentSections = diffSections(currentDiff);
-  const kept = [];
-  for (const section of currentSections) {
-    const filePath = section.newPath ?? section.oldPath;
-    const previous = previousSections.get(filePath);
-    const currentSplit = splitHunks(section);
-    if (
-      previous !== undefined &&
-      currentSplit.hunks.length === 0 &&
-      sectionFingerprint(previous) === sectionFingerprint(section)
-    )
-      continue;
-    const previousSplit = previous === undefined ? null : splitHunks(previous);
-    if (
-      previousSplit === null ||
-      currentSplit.hunks.length === 0 ||
-      currentSplit.header !== previousSplit.header
-    ) {
-      kept.push(section);
-      continue;
-    }
-    const previousLines = readPreviousFile(filePath)?.split("\n") ?? null;
-    const currentLines = readCurrentFile(filePath)?.split("\n") ?? null;
-    const previousHunks = hunkCounts(previousSplit.hunks, previousLines);
-    const hunks = currentSplit.hunks.filter(hunk => isNewHunk(hunk, previousHunks, currentLines));
-    if (hunks.length === 0) continue;
-    const headerEnd = section.lines.indexOf(currentSplit.hunks[0][0]);
-    kept.push({ ...section, lines: [...section.lines.slice(0, headerEnd), ...hunks.flat()] });
-  }
+  const changed = currentSections.filter(
+    section => !previousFingerprints.has(sectionFingerprint(section)),
+  );
   return {
-    diff: kept.map(section => section.lines.join("")).join(""),
-    stat: kept.map(section => statForSection(section, section.newPath ?? section.oldPath)).join(""),
-    unchanged: currentSections.length - kept.length,
+    diff: changed.map(section => section.lines.join("")).join(""),
+    stat: changed
+      .map(section => statForSection(section, section.newPath ?? section.oldPath))
+      .join(""),
+    unchanged: currentSections.length - changed.length,
     total: currentSections.length,
   };
 }
@@ -452,7 +376,7 @@ export async function preparePullRequest({
       mainTouched = null;
     }
     if (incremental === null) {
-      const previousHeadSha = await findRebasedReviewedSha({
+      const previous = await findRebasedReviewedSha({
         rest,
         repository,
         prNumber,
@@ -461,14 +385,17 @@ export async function preparePullRequest({
         checkDigest,
         log,
       });
-      if (previousHeadSha !== null) {
+      if (previous !== null) {
+        const previousHeadSha = previous.sha;
         try {
-          const previousMergeBaseSha = await resolveMergeBase({
-            rest,
-            repository,
-            baseSha,
-            headSha: previousHeadSha,
-          });
+          const previousMergeBaseSha =
+            previous.mergeBaseSha ??
+            (await resolveMergeBase({
+              rest,
+              repository,
+              baseSha,
+              headSha: previousHeadSha,
+            }));
           if (fetchShallow(git, repoDir, [previousMergeBaseSha, previousHeadSha], fetchEnv)) {
             rebased = { previousHeadSha, previousMergeBaseSha };
           } else {
@@ -546,16 +473,11 @@ export async function preparePullRequest({
   let reviewDiff;
   let reviewStat;
   if (rebased !== null) {
-    const readFile = sha => filePath =>
-      git(["show", `${sha}:${filePath}`], { cwd: repoDir, allowFailure: true })?.toString("utf8") ??
-      null;
     const filtered = filterRebasedDiff(
       diff(rebased.previousMergeBaseSha, fullTreePathspecs, rebased.previousHeadSha).toString(
         "utf8",
       ),
       fullDiff.toString("utf8"),
-      readFile(rebased.previousHeadSha),
-      readFile(headSha),
     );
     reviewBaseSha = rebased.previousHeadSha;
     rebased.unchanged = filtered.unchanged;
@@ -590,21 +512,6 @@ export async function preparePullRequest({
     reviewStat = stat(reviewBaseSha, fullTreePathspecs);
   }
 
-  // An empty review scope over a non-empty PR means this push changed
-  // nothing reviewable. The worker reads an empty diff as "skip every
-  // check", which would take the resolution judge down with them: threads
-  // whose file has since left the PR would never be closed. Widen back to the
-  // merge base so the judge still runs.
-  if (reviewDiff.length === 0 && fullDiff.length > 0 && reviewBaseSha !== mergeBaseSha) {
-    log(
-      `Nothing reviewable changed since ${reviewBaseSha}; widening to the merge base so thread resolution still runs.`,
-    );
-    reviewBaseSha = mergeBaseSha;
-    mainTouched = null;
-    rebased = null;
-    reviewDiff = fullDiff;
-    reviewStat = fullStat;
-  }
   writeFileSync(out(PREPARED_FILES.DIFF), reviewDiff);
   writeFileSync(out(PREPARED_FILES.STAT), reviewStat);
 

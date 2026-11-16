@@ -200,6 +200,7 @@ runs:
       env:
         ACTION_PATH: ${{ runner.temp }}/weave-checks-action
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        MERGE_BASE_SHA: ${{ steps.prepare.outputs.merge-base }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         REPO_DIR: ${{ github.workspace }}/.weave-checks-repo
         MATRIX_PATH: ${{ runner.temp }}/weave-checks/matrix.json

@@ -23,6 +23,7 @@ import {
   checkSetDigest,
   everyCheckReviewed,
   formatReviewedMarker,
+  parseReviewedMarker,
   formatReviewComment,
   interpretResult,
   INTERPRET_OUTCOME,
@@ -928,6 +929,35 @@ describe("checkSetDigest", () => {
 describe("formatReviewedMarker", () => {
   it("embeds the sha and check-set digest behind a stable prefix", () => {
     assert.equal(formatReviewedMarker(SHA, CHECK_DIGEST), `reviewed:${SHA}:${CHECK_DIGEST}`);
+  });
+});
+
+describe("parseReviewedMarker", () => {
+  const MERGE_BASE = "c".repeat(40);
+
+  it("reads the merge base recorded with the review", () => {
+    assert.deepEqual(
+      parseReviewedMarker(formatReviewedMarker(SHA, CHECK_DIGEST, MERGE_BASE), SHA, CHECK_DIGEST),
+      { mergeBaseSha: MERGE_BASE },
+    );
+  });
+
+  it("accepts a marker without a merge base", () => {
+    assert.deepEqual(
+      parseReviewedMarker(formatReviewedMarker(SHA, CHECK_DIGEST), SHA, CHECK_DIGEST),
+      { mergeBaseSha: null },
+    );
+  });
+
+  it("rejects a marker for another sha, check set, or malformed merge base", () => {
+    const marker = formatReviewedMarker(SHA, CHECK_DIGEST, MERGE_BASE);
+    assert.equal(parseReviewedMarker(marker, "f".repeat(40), CHECK_DIGEST), null);
+    assert.equal(parseReviewedMarker(marker, SHA, "d".repeat(64)), null);
+    assert.equal(
+      parseReviewedMarker(`${formatReviewedMarker(SHA, CHECK_DIGEST)}:zz`, SHA, CHECK_DIGEST),
+      null,
+    );
+    assert.equal(parseReviewedMarker(undefined, SHA, CHECK_DIGEST), null);
   });
 });
 

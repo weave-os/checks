@@ -657,8 +657,18 @@ export function checkSetDigest(checks, repoDir = ".") {
 // digest changes when a check is added, removed, or its criteria/model changes.
 const REVIEWED_MARKER_PREFIX = "reviewed:";
 
-export function formatReviewedMarker(sha, digest) {
-  return `${REVIEWED_MARKER_PREFIX}${sha}:${digest}`;
+export function formatReviewedMarker(sha, digest, mergeBaseSha = null) {
+  const marker = `${REVIEWED_MARKER_PREFIX}${sha}:${digest}`;
+  return mergeBaseSha === null ? marker : `${marker}:${mergeBaseSha}`;
+}
+
+export function parseReviewedMarker(externalId, sha, digest) {
+  const marker = formatReviewedMarker(sha, digest);
+  if (externalId === marker) return { mergeBaseSha: null };
+  const match = /^:([0-9a-f]{40})$/.exec(
+    externalId?.startsWith(marker) ? externalId.slice(marker.length) : "",
+  );
+  return match === null ? null : { mergeBaseSha: match[1] };
 }
 
 // True when every check state completed a review, whatever it concluded.
