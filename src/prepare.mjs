@@ -20,6 +20,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { diffSections, statForSection } from "./file-glob.mjs";
 import { git as defaultGit } from "./git.mjs";
 import { formatReviewedMarker } from "./parse.mjs";
 
@@ -34,6 +35,10 @@ const FETCH_RETRY_DELAYS_S = [0, 2, 4, 8];
 // GitHub's PR commits endpoint pages at 100 and stops at 250 commits.
 const PR_COMMITS_PAGE_SIZE = 100;
 const PR_COMMITS_MAX_PAGES = 3;
+const MAX_FORCE_PUSH_CANDIDATES = 10;
+
+const FORCE_PUSH_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!, $limit: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { timelineItems(last: $limit, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) { nodes { ... on HeadRefForcePushedEvent { beforeCommit { oid } } } } } } }";
 
 export const DIFF_BASE = Object.freeze({
   INCREMENTAL: "incremental",
@@ -106,7 +111,18 @@ export async function findLastReviewedSha({
     log(`Could not list PR commits (${error.message}); reviewing from the merge base.`);
     return null;
   }
-  for (const sha of candidates.slice(0, maxCandidates)) {
+  return firstReviewedSha({
+    rest,
+    repository,
+    candidates: candidates.slice(0, maxCandidates),
+    aggregateName,
+    checkDigest,
+    log,
+  });
+}
+
+async function firstReviewedSha({ rest, repository, candidates, aggregateName, checkDigest, log }) {
+  for (const sha of candidates) {
     let runs;
     try {
       runs = await rest(
@@ -122,6 +138,114 @@ export async function findLastReviewedSha({
     if (runs?.check_runs?.[0]?.external_id === formatReviewedMarker(sha, checkDigest)) return sha;
   }
   return null;
+}
+
+export async function findRebasedReviewedSha({
+  rest,
+  repository,
+  prNumber,
+  headSha,
+  aggregateName,
+  checkDigest,
+  log = () => {},
+}) {
+  const [owner, name] = repository.split("/");
+  const number = Number(prNumber);
+  if (!owner || !name || !Number.isSafeInteger(number)) return null;
+  let response;
+  try {
+    response = await rest("POST", "graphql", {
+      query: FORCE_PUSH_QUERY,
+      variables: { owner, name, number, limit: MAX_FORCE_PUSH_CANDIDATES },
+    });
+  } catch (error) {
+    log("Could not list force pushes (" + error.message + "); reviewing from the merge base.");
+    return null;
+  }
+  if (response?.errors) {
+    log("Could not list force pushes; reviewing from the merge base.");
+    return null;
+  }
+  const nodes = response?.data?.repository?.pullRequest?.timelineItems?.nodes;
+  if (!Array.isArray(nodes)) return null;
+  const candidates = [
+    ...new Set(
+      nodes
+        .map(node => node?.beforeCommit?.oid)
+        .filter(sha => typeof sha === "string" && sha !== "" && sha !== headSha)
+        .reverse(),
+    ),
+  ];
+  return firstReviewedSha({ rest, repository, candidates, aggregateName, checkDigest, log });
+}
+
+function splitHunks(section) {
+  const header = [];
+  const hunks = [];
+  for (const line of section.lines) {
+    if (line.startsWith("@@")) hunks.push([line]);
+    else if (hunks.length === 0) header.push(line);
+    else hunks.at(-1).push(line);
+  }
+  return { header: header.filter(line => !line.startsWith("index ")).join(""), hunks };
+}
+
+function sectionFingerprint(section) {
+  return section.lines
+    .filter(line => !line.startsWith("index "))
+    .map(line => (line.startsWith("@@") ? "@@\n" : line))
+    .join("");
+}
+
+function changeCounts(hunks) {
+  const counts = new Map();
+  for (const line of hunks.flatMap(hunk => hunk.slice(1))) {
+    if (!line.startsWith("+") && !line.startsWith("-")) continue;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function hasNewChange(hunk, previous) {
+  let found = false;
+  for (const line of hunk.slice(1)) {
+    if (line.startsWith("\\")) return true;
+    if (!line.startsWith("+") && !line.startsWith("-")) continue;
+    const count = previous.get(line) ?? 0;
+    if (count === 0) found = true;
+    else previous.set(line, count - 1);
+  }
+  return found;
+}
+
+export function filterRebasedDiff(previousDiff, currentDiff) {
+  const previousSections = new Map(
+    diffSections(previousDiff).map(section => [section.newPath ?? section.oldPath, section]),
+  );
+  const currentSections = diffSections(currentDiff);
+  const kept = [];
+  for (const section of currentSections) {
+    const previous = previousSections.get(section.newPath ?? section.oldPath);
+    if (previous !== undefined && sectionFingerprint(previous) === sectionFingerprint(section))
+      continue;
+    const current = splitHunks(section);
+    const before = previous === undefined ? null : splitHunks(previous);
+    if (before === null || current.hunks.length === 0 || current.header !== before.header) {
+      kept.push(section);
+      continue;
+    }
+    const previousChanges = changeCounts(before.hunks);
+    const hunks = current.hunks.filter(hunk => hasNewChange(hunk, previousChanges));
+    if (hunks.length === 0) continue;
+    const headerEnd = section.lines.indexOf(current.hunks[0][0]);
+    kept.push({ ...section, lines: [...section.lines.slice(0, headerEnd), ...hunks.flat()] });
+  }
+  return {
+    diff: kept.map(section => section.lines.join("")).join(""),
+    stat: kept.map(section => statForSection(section, section.newPath ?? section.oldPath)).join(""),
+    unchanged: currentSections.length - kept.length,
+    total: currentSections.length,
+  };
 }
 
 // Guards 2 and 3, given a fully reviewed candidate. Returns
@@ -231,6 +355,7 @@ export async function preparePullRequest({
 
   let reviewBaseSha = mergeBaseSha;
   let mainTouched = null;
+  let rebased = null;
   if (diffBase === DIFF_BASE.INCREMENTAL) {
     const lastReviewedSha = await findLastReviewedSha({
       rest,
@@ -293,6 +418,38 @@ export async function preparePullRequest({
       reviewBaseSha = mergeBaseSha;
       mainTouched = null;
     }
+    if (incremental === null) {
+      const previousHeadSha = await findRebasedReviewedSha({
+        rest,
+        repository,
+        prNumber,
+        headSha,
+        aggregateName,
+        checkDigest,
+        log,
+      });
+      if (previousHeadSha !== null) {
+        try {
+          const previousMergeBaseSha = await resolveMergeBase({
+            rest,
+            repository,
+            baseSha,
+            headSha: previousHeadSha,
+          });
+          if (fetchShallow(git, repoDir, [previousMergeBaseSha, previousHeadSha], fetchEnv)) {
+            rebased = { previousHeadSha, previousMergeBaseSha };
+          } else {
+            log(
+              `Could not fetch rebased review ${previousHeadSha}; reviewing from the merge base.`,
+            );
+          }
+        } catch (error) {
+          log(
+            `Could not resolve rebased review ${previousHeadSha} (${error.message}); reviewing from the merge base.`,
+          );
+        }
+      }
+    }
   }
 
   // Fetch the two trees the PR-scope diff names. The checkout is shallow and
@@ -314,7 +471,7 @@ export async function preparePullRequest({
     );
   }
 
-  const diff = (from, pathspecs) =>
+  const diff = (from, pathspecs, to = headSha) =>
     git(
       [
         "-c",
@@ -324,7 +481,7 @@ export async function preparePullRequest({
         "--dst-prefix=b/",
         "-U0",
         from,
-        headSha,
+        to,
         "--",
         ...pathspecs,
       ],
@@ -355,7 +512,19 @@ export async function preparePullRequest({
 
   let reviewDiff;
   let reviewStat;
-  if (reviewBaseSha === mergeBaseSha) {
+  if (rebased !== null) {
+    const filtered = filterRebasedDiff(
+      diff(rebased.previousMergeBaseSha, fullTreePathspecs, rebased.previousHeadSha).toString(
+        "utf8",
+      ),
+      fullDiff.toString("utf8"),
+    );
+    reviewBaseSha = rebased.previousHeadSha;
+    rebased.unchanged = filtered.unchanged;
+    rebased.total = filtered.total;
+    reviewDiff = Buffer.from(filtered.diff, "utf8");
+    reviewStat = Buffer.from(filtered.stat, "utf8");
+  } else if (reviewBaseSha === mergeBaseSha) {
     reviewDiff = fullDiff;
     reviewStat = fullStat;
   } else if (mainTouched !== null) {
@@ -394,6 +563,7 @@ export async function preparePullRequest({
     );
     reviewBaseSha = mergeBaseSha;
     mainTouched = null;
+    rebased = null;
     reviewDiff = fullDiff;
     reviewStat = fullStat;
   }
@@ -405,6 +575,8 @@ export async function preparePullRequest({
   let note;
   if (reviewBaseSha === mergeBaseSha) {
     note = `merge base ${mergeBaseSha} (full PR diff)`;
+  } else if (rebased !== null) {
+    note = `rebased from reviewed ${rebased.previousHeadSha}; ${rebased.unchanged} of ${rebased.total} files unchanged`;
   } else if (mainTouched !== null) {
     note = `last reviewed ${reviewBaseSha} (incremental), with ${mainTouched.length} file(s) touched by a base-branch merge re-diffed from ${mergeBaseSha} so the merged-in commits are not reviewed`;
   } else {

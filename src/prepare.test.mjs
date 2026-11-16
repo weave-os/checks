@@ -69,13 +69,29 @@ function repos() {
 
 // Answers the three REST calls prepare.mjs makes from the origin repo's real
 // history, so compare statuses and merge bases are what GitHub would say.
-function fakeRest(space, { markers = {}, prCommits = null } = {}) {
+function fakeRest(
+  space,
+  { markers = {}, prCommits = null, forcePushes = [], graphqlError = null } = {},
+) {
   const calls = [];
   const isAncestor = (a, b) =>
     realGit(["merge-base", "--is-ancestor", a, b], { cwd: space.origin, allowFailure: true }) !==
     null;
-  const rest = async (method, apiPath) => {
+  const rest = async (method, apiPath, body) => {
     calls.push(apiPath);
+    if (method === "POST" && apiPath === "graphql") {
+      if (graphqlError !== null) throw graphqlError;
+      assert.deepEqual(body.variables, { owner: "o", name: "r", number: 7, limit: 10 });
+      return {
+        data: {
+          repository: {
+            pullRequest: {
+              timelineItems: { nodes: forcePushes.map(oid => ({ beforeCommit: { oid } })) },
+            },
+          },
+        },
+      };
+    }
     let match = /^repos\/o\/r\/compare\/([0-9a-f]+)\.\.\.([0-9a-f]+)\?per_page=1$/.exec(apiPath);
     if (match) {
       const [, a, b] = match;
@@ -272,6 +288,126 @@ describe("preparePullRequest", () => {
     assert.equal(result.reviewBaseSha, base);
     assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
   });
+
+  it("widens a pure rebase of a fully reviewed head to the merge base", async () => {
+    const space = repos();
+    const oldBase = space.commit({ "README.md": "hello\n", "app.js": "base\n" });
+    space.branch("old-feature");
+    const reviewed = space.commit({ "app.js": "base\nfeature\n" });
+    space.checkout("main");
+    const newBase = space.commit({ "README.md": "hello\nmain\n" });
+    space.branch("rebased");
+    const head = space.commit({ "app.js": "base\nfeature\n" });
+
+    const result = await prepare(
+      space,
+      fakeRest(space, {
+        prCommits: [head],
+        forcePushes: [reviewed],
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
+      }),
+      { baseSha: newBase, headSha: head },
+    );
+
+    assert.equal(result.reviewBaseSha, newBase);
+    assert.ok(
+      result.logs.some(line => line.includes(`Nothing reviewable changed since ${reviewed}`)),
+    );
+    assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
+    assert.ok(oldBase);
+  });
+
+  it("reviews only changed hunks after a rebase", async () => {
+    const space = repos();
+    const oldBase = space.commit({ "a.js": "one\ntwo\nthree\nfour\n", "b.js": "base\n" });
+    space.branch("old-feature");
+    const reviewed = space.commit({
+      "a.js": "one\nold edit\nthree\nreviewed\nfour\n",
+      "b.js": "base\nreviewed\n",
+    });
+    space.checkout("main");
+    const newBase = space.commit({ "README.md": "main\n" });
+    space.branch("rebased");
+    const head = space.commit({
+      "a.js": "one\nconflict fix\nthree\nreviewed\nfour\n",
+      "b.js": "base\nreviewed\n",
+    });
+
+    const result = await prepare(
+      space,
+      fakeRest(space, {
+        forcePushes: [reviewed],
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
+      }),
+      { baseSha: newBase, headSha: head },
+    );
+
+    const review = space.read("pr.diff");
+    assert.equal(result.reviewBaseSha, reviewed);
+    assert.match(result.note, /rebased from reviewed .*; 1 of 2 files unchanged/);
+    assert.deepEqual(addedFiles(review), ["a.js"]);
+    assert.match(review, /\+conflict fix/);
+    assert.doesNotMatch(review, /\+reviewed/);
+    assert.match(space.read("pr.stat"), /^a\.js \| 2 \+-$/m);
+    assert.ok(oldBase);
+  });
+
+  it("keeps a deletion introduced by a rebase", async () => {
+    const space = repos();
+    const oldBase = space.commit({ "app.js": "guard\nwork\n" });
+    space.branch("old-feature");
+    const reviewed = space.commit({ "app.js": "guard\nwork\nfeature\n" });
+    space.checkout("main");
+    const newBase = space.commit({ "README.md": "main\n" });
+    space.branch("rebased");
+    const head = space.commit({ "app.js": "work\nfeature\n" });
+
+    await prepare(
+      space,
+      fakeRest(space, {
+        forcePushes: [reviewed],
+        markers: { [reviewed]: formatReviewedMarker(reviewed, CHECK_DIGEST) },
+      }),
+      { baseSha: newBase, headSha: head },
+    );
+
+    const review = space.read("pr.diff");
+    assert.match(review, /^-guard$/m);
+    assert.doesNotMatch(review, /^\+feature$/m);
+    assert.ok(oldBase);
+  });
+
+  for (const [name, options] of [
+    ["the check set changed", { marker: "b".repeat(64) }],
+    ["force-push lookup fails", { graphqlError: new Error("unavailable") }],
+  ]) {
+    it(`reviews a rebase from the merge base when ${name}`, async () => {
+      const space = repos();
+      const oldBase = space.commit({ "app.js": "base\n" });
+      space.branch("old-feature");
+      const reviewed = space.commit({ "app.js": "base\nreviewed\n" });
+      space.checkout("main");
+      const newBase = space.commit({ "README.md": "main\n" });
+      space.branch("rebased");
+      const head = space.commit({ "app.js": "base\nreviewed\n" });
+
+      const result = await prepare(
+        space,
+        fakeRest(space, {
+          forcePushes: [reviewed],
+          graphqlError: options.graphqlError ?? null,
+          markers: {
+            [reviewed]: formatReviewedMarker(reviewed, options.marker ?? CHECK_DIGEST),
+          },
+        }),
+        { baseSha: newBase, headSha: head },
+      );
+
+      assert.equal(result.reviewBaseSha, newBase);
+      assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
+      assert.ok(oldBase);
+    });
+  }
 
   it("re-diffs files a base-branch merge touched from the current merge base", async () => {
     const space = repos();

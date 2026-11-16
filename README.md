@@ -225,7 +225,7 @@ ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 | `checks-dir`          | `.weave-checks` | Check definitions, relative to the repo root.                                                            |
 | `use-default-checks`  | `false`         | Also run this package's starter checks alongside `checks-dir`.                                           |
 | `doc-files`           | `README.md`     | Comma-separated Markdown files in `checks-dir` that are documentation, not checks.                       |
-| `diff-base`           | `incremental`   | Incremental review after verifying a fully-reviewed ancestor, or `merge-base` for the full PR every run. |
+| `diff-base`           | `incremental`   | Incremental review after a fully reviewed ancestor or rebase, or `merge-base` for the full PR every run. |
 | `concurrency`         | `16`            | Checks run at once.                                                                                      |
 | `claude-code-version` | `latest`        | `@anthropic-ai/claude-code` version; pin it for reproducible reviews.                                    |
 | `fail-on-findings`    | `false`         | Fail the job on findings, without changing check-run conclusions.                                        |
