@@ -92,7 +92,7 @@ on:
         description: Anthropic API key (provider anthropic).
         required: false
       claude-code-oauth-token:
-        description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key.
+        description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key. Several tokens, one per line, are used in turn, and a call that hits one token's usage limit is rerun on the next.
         required: false
       provider-env:
         description: >-

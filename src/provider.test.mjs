@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { PROVIDER, childEnvironment, createProvider, parseProviderEnv } from "./provider.mjs";
-import { anthropicProvider } from "./providers/anthropic.mjs";
+import { anthropicProvider, hitUsageLimit } from "./providers/anthropic.mjs";
 import { clientReportedCost } from "./providers/client-cost.mjs";
 import { inheritProvider } from "./providers/inherit.mjs";
 
@@ -172,5 +172,52 @@ describe("client-reported cost", () => {
         { cost: 1.5, error: null },
       );
     }
+  });
+});
+
+describe("anthropic with several OAuth tokens", () => {
+  const limitHit = {
+    code: 1,
+    cli: {
+      result:
+        "You've hit your org's monthly spend limit · ask your admin to raise it at https://claude.ai/admin-settings/usage · your weekly limit resets 10am (UTC)",
+    },
+  };
+  const token = env => env.CLAUDE_CODE_OAUTH_TOKEN;
+
+  it("recognizes only a failed call that reports a usage limit", () => {
+    assert.equal(hitUsageLimit(limitHit), true);
+    assert.equal(hitUsageLimit({ ...limitHit, code: 0 }), false);
+    assert.equal(hitUsageLimit({ code: 1, cli: { result: "Prompt is too long" } }), false);
+    assert.equal(hitUsageLimit({ code: 1, cli: null }), false);
+  });
+
+  it("takes the tokens in turn, one per line, ignoring blanks", () => {
+    const provider = anthropicProvider({ oauthToken: "a\r\n\n b \n" });
+    assert.deepEqual(
+      [1, 2, 3].map(() => token(provider.envFor({}))),
+      ["a", "b", "a"],
+    );
+  });
+
+  it("fails over past a limited token until none is left", () => {
+    const provider = anthropicProvider({ oauthToken: "a\nb" });
+    assert.equal(provider.failover({ CLAUDE_CODE_OAUTH_TOKEN: "a" }, limitHit), true);
+    assert.deepEqual(
+      [1, 2].map(() => token(provider.envFor({}))),
+      ["b", "b"],
+    );
+    assert.equal(provider.failover({ CLAUDE_CODE_OAUTH_TOKEN: "b" }, limitHit), false);
+  });
+
+  it("does not fail over on other errors, one token, or a token set through env", () => {
+    const provider = anthropicProvider({ oauthToken: "a\nb" });
+    assert.equal(
+      provider.failover({ CLAUDE_CODE_OAUTH_TOKEN: "a" }, { code: 1, cli: null }),
+      false,
+    );
+    assert.equal(provider.failover({ CLAUDE_CODE_OAUTH_TOKEN: "x" }, limitHit), false);
+    const single = anthropicProvider({ oauthToken: "a" });
+    assert.equal(single.failover({ CLAUDE_CODE_OAUTH_TOKEN: "a" }, limitHit), false);
   });
 });

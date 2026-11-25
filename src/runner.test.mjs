@@ -25,6 +25,7 @@ import {
   totalDuration,
   validateAndFinalize,
 } from "./runner.mjs";
+import { anthropicProvider } from "./providers/anthropic.mjs";
 
 const CHECK = {
   slug: "demo-check",
@@ -195,6 +196,27 @@ function invoke(space, overrides = {}) {
 }
 
 describe("runClaude", () => {
+  it("reruns on the next OAuth token when one hits its usage limit", async () => {
+    const space = workspace();
+    const limited = text => [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "sess-l" }),
+      JSON.stringify({ type: "result", subtype: CLI_RESULT_SUBTYPE.SUCCESS, result: text }),
+    ];
+    space.stream(
+      limited("You've hit your org's monthly spend limit · your weekly limit resets 10am (UTC)"),
+      limited("some other failure"),
+    );
+    process.env[EXIT_CODE] = "1";
+
+    const invocation = await invoke(space, {
+      provider: anthropicProvider({ oauthToken: "token-a\ntoken-b" }),
+    });
+
+    assert.equal(space.callCount(), 2);
+    assert.equal(space.childEnv().get("CLAUDE_CODE_OAUTH_TOKEN"), "token-b");
+    assert.equal(invocation.cli.result, "some other failure");
+  });
+
   it("invokes the CLI with the stream-json review argv", async () => {
     const space = workspace();
     space.stream(successEvents({ verdict: VERDICT.PASS, reason: "fine" }));

@@ -11,6 +11,9 @@
 //                    CLI child starts, for secrets only the coordinator needs
 //   envFor({ model, cluster, slug, suffix })
 //                 -- env overlaid on the child after dropEnv is applied
+//   failover(childEnv, invocation)   (optional)
+//                 -- true when the credential in childEnv hit a usage limit
+//                    and the provider has another, so runClaude reruns the call
 //   resolveCost({ sessionId, resultEvent, model, cluster })
 //                 -- Promise<{ cost, error }> or { cost, error }; a null cost
 //                    means unknown, never zero, and `error` says why

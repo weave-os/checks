@@ -21,7 +21,7 @@ inputs:
     description: Anthropic API key (provider anthropic). Not needed with claude-code-oauth-token or a provider-env gateway that authenticates itself.
     default: ""
   claude-code-oauth-token:
-    description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key.
+    description: Claude Code OAuth token (provider anthropic), as an alternative to anthropic-api-key. Several tokens, one per line, are used in turn, and a call that hits one token's usage limit is rerun on the next.
     default: ""
   weave-router-key:
     description: Weave Router key for requests and session costs (provider weave-router). Required in that mode.
