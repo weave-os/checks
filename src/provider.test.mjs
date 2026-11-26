@@ -217,6 +217,12 @@ describe("anthropic with several OAuth tokens", () => {
       false,
     );
     assert.equal(provider.failover({ CLAUDE_CODE_OAUTH_TOKEN: "x" }, limitHit), false);
+    // provider-env wins over the rotated token, so a rerun would reuse it.
+    const pinned = anthropicProvider({
+      oauthToken: "a\nb",
+      env: { CLAUDE_CODE_OAUTH_TOKEN: "a" },
+    });
+    assert.equal(pinned.failover(pinned.envFor({}), limitHit), false);
     const single = anthropicProvider({ oauthToken: "a" });
     assert.equal(single.failover({ CLAUDE_CODE_OAUTH_TOKEN: "a" }, limitHit), false);
   });

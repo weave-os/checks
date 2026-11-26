@@ -68,10 +68,17 @@ export function anthropicProvider({ env = {}, apiKey = "", oauthToken = "" } = {
     },
     // Called with the env envFor() returned and the finished invocation.
     // True means: that token hit its usage limit and another one has not, so
-    // rerun the call. A token set through `env` is not ours to rotate.
+    // rerun the call. A token set through `env` overrides ours on every call,
+    // so rotating would rerun with the same token forever: never fail over then.
     failover: (childEnv, invocation) => {
       const token = childEnv.CLAUDE_CODE_OAUTH_TOKEN;
-      if (!tokens.includes(token) || !hitUsageLimit(invocation)) return false;
+      if (
+        Object.hasOwn(env, "CLAUDE_CODE_OAUTH_TOKEN") ||
+        !tokens.includes(token) ||
+        !hitUsageLimit(invocation)
+      ) {
+        return false;
+      }
       limited.add(token);
       return limited.size < tokens.length;
     },
