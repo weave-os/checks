@@ -73,27 +73,34 @@ export function resultPath(tempDir, slug, suffix) {
 // `onCostError` receives `{ slug, suffix, error }` when the provider could not
 // price the session, so the caller can surface it wherever its own summary
 // lives.
-export async function runClaude({
-  slug,
-  suffix,
-  model,
-  cluster = null,
-  schemaText,
-  promptText,
-  repoDir,
-  tempDir,
-  provider = null,
-  settingSources = null,
-  settingsPath = null,
-  dropEnv = [],
-  onCostError = null,
-  toolsDisabled = false,
-}) {
+//
+// When the provider's optional `failover(childEnv, invocation)` returns true
+// (its credential hit a usage limit and it has another), the call is rerun
+// with fresh env from envFor(). The refused attempt spent nothing, and its
+// diagnostic files are overwritten by the rerun.
+export async function runClaude(options) {
+  const {
+    slug,
+    suffix,
+    model,
+    cluster = null,
+    schemaText,
+    promptText,
+    repoDir,
+    tempDir,
+    provider = null,
+    settingSources = null,
+    settingsPath = null,
+    dropEnv = [],
+    onCostError = null,
+    toolsDisabled = false,
+  } = options;
   const promptPath = resultPath(tempDir, slug, `${suffix}.prompt.txt`);
   const transcriptPath = resultPath(tempDir, slug, `${suffix}.transcript.jsonl`);
   const sessionPath = resultPath(tempDir, slug, `${suffix}.session.txt`);
   const stderrPath = resultPath(tempDir, slug, `${suffix}.stderr`);
   writeFileSync(promptPath, promptText);
+  const providerEnv = provider?.envFor({ model, cluster, slug, suffix }) ?? {};
 
   // The CLI is invoked with stream-json instead of single-blob json. The
   // stream-json terminal `result` event carries every field the verdict
@@ -136,7 +143,7 @@ export async function runClaude({
       env: childEnvironment({
         baseEnv: process.env,
         dropEnv: [...(provider?.dropEnv ?? []), ...dropEnv],
-        providerEnv: provider?.envFor({ model, cluster, slug, suffix }) ?? {},
+        providerEnv,
       }),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -177,7 +184,7 @@ export async function runClaude({
   if (error !== null) {
     onCostError?.({ slug, suffix, error });
   }
-  return {
+  const invocation = {
     code: processResult.code,
     stderr: processResult.stderr,
     sessionId,
@@ -187,6 +194,7 @@ export async function runClaude({
     costLabel: provider?.costLabel ?? null,
     transcript,
   };
+  return provider?.failover?.(providerEnv, invocation) ? runClaude(options) : invocation;
 }
 
 // Turns a stream-json terminal `result` event into the legacy single-blob

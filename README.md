@@ -235,11 +235,11 @@ ANTHROPIC_CUSTOM_HEADERS=X-Workspace: code-review
 
 #### Secrets
 
-| Secret                                          | Purpose                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------- |
-| `weave-router-key`                              | Router key used for requests and session-cost lookups, only for Router mode.    |
-| `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them.         |
-| `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line. |
+| Secret                                          | Purpose                                                                                                                                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `weave-router-key`                              | Router key used for requests and session-cost lookups, only for Router mode.                                                                                                                                  |
+| `anthropic-api-key` / `claude-code-oauth-token` | Anthropic credentials; provide one if the selected endpoint needs them. `claude-code-oauth-token` takes several tokens, one per line: calls use them in turn and move past a token that hits its usage limit. |
+| `provider-env`                                  | Extra `KEY=VALUE` environment for Anthropic-compatible providers, one per line.                                                                                                                               |
 
 #### Outputs
 
