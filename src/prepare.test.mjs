@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
+import { discoverChecks } from "./discover.mjs";
 import { git as realGit } from "./git.mjs";
-import { formatReviewedMarker, parseAddedLines } from "./parse.mjs";
+import { readIgnorePathspecs } from "./ignore.mjs";
+import { checkSetDigest, formatReviewedMarker, parseAddedLines } from "./parse.mjs";
 import { DIFF_BASE, fetchAuthEnv, preparePullRequest, verifyCheckout } from "./prepare.mjs";
 
 const ROOTS = [];
@@ -264,6 +270,69 @@ describe("preparePullRequest", () => {
     );
 
     assert.equal(result.reviewBaseSha, base);
+    assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
+  });
+
+  it("re-reviews previously ignored code when the CLI removes an exclusion", async t => {
+    const space = repos();
+    const checksDir = ".weave-checks";
+    const base = space.commit({
+      [`${checksDir}/policy.md`]:
+        "---\nname: Policy\ndescription: Reject forbidden calls\nintelligence: low\n---\nReject forbidden().\n",
+      [`${checksDir}/.ignore`]: "generated\nvendor\n",
+    });
+    space.branch("feature");
+    const reviewed = space.commit({ "generated/app.js": "forbidden();\n" });
+    const checks = discoverChecks(checksDir, { repoDir: space.origin });
+    const previousPathspecs = readIgnorePathspecs(path.join(space.origin, checksDir)).pathspecs;
+    const previousDigest = checkSetDigest(checks, space.origin, previousPathspecs);
+
+    const head = space.commit({
+      [`${checksDir}/.ignore`]: "vendor\n",
+      "vendor/lib.js": "still excluded\n",
+    });
+    const rest = fakeRest(space, {
+      prCommits: [reviewed, head],
+      markers: { [reviewed]: formatReviewedMarker(reviewed, previousDigest) },
+    });
+    const server = createServer(async (request, response) => {
+      try {
+        const result = await rest(request.method, request.url.slice(1));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(result));
+      } catch (error) {
+        response.writeHead(500);
+        response.end(JSON.stringify({ message: error.message }));
+      }
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const cli = fileURLToPath(new URL("../bin/cli.mjs", import.meta.url));
+    run(space.origin, "remote", "add", "origin", `file://${space.origin}`);
+    await promisify(execFile)(process.execPath, [cli, "prepare"], {
+      env: {
+        ...process.env,
+        ...GIT_ENV,
+        REPO_DIR: space.origin,
+        WEAVE_CHECKS_TEMP_DIR: space.outDir,
+        WEAVE_CHECKS_DIR: checksDir,
+        HEAD_SHA: head,
+        BASE_SHA: base,
+        GITHUB_REPOSITORY: "o/r",
+        PR_NUMBER: "7",
+        WEAVE_CHECKS_APP_TOKEN: "test-app-token",
+        GITHUB_API_URL: `http://127.0.0.1:${server.address().port}`,
+        GITHUB_OUTPUT: path.join(space.outDir, "github-output"),
+        GITHUB_STEP_SUMMARY: "",
+      },
+    });
+
+    const full = parseAddedLines(space.read("pr.full.diff"));
+    assert.ok(full.get("generated/app.js")?.has(1));
+    assert.equal(full.has("vendor/lib.js"), false);
+    const review = parseAddedLines(space.read("pr.diff"));
+    assert.ok(review.get("generated/app.js")?.has(1), "newly included code must reach review");
+    assert.equal(review.has("vendor/lib.js"), false);
     assert.equal(space.read("pr.diff"), space.read("pr.full.diff"));
   });
 
