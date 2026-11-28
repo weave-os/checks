@@ -137,6 +137,123 @@ describe("weave-checks run", () => {
     assert.match(result.stdout, /app\.js:1 Avoid alpha\./);
   });
 
+  for (const agentExitCode of [3, 0]) {
+    it(`contains a rejected prompt when the agent closes stdin and exits ${agentExitCode}`, () => {
+      const space = workspace();
+      writeFileSync(path.join(space.repo, "app.js"), "synthetic change\n".repeat(100000));
+      const artifacts = path.join(space.root, "artifacts");
+      const terminal = {
+        type: "result",
+        subtype: agentExitCode === 0 ? "success" : "error_during_execution",
+        is_error: agentExitCode !== 0,
+        result: "Synthetic configuration rejection",
+        session_id: "early-exit",
+        total_cost_usd: 0.25,
+        duration_ms: 1,
+        structured_output: { verdict: "PASS", reason: "Only a partial prompt was received" },
+      };
+      writeFileSync(
+        path.join(space.root, "bin", "claude"),
+        `#!${process.execPath}
+const { closeSync } = require("node:fs");
+if (!process.argv.includes("-p")) {
+  console.log("fake 0.0.0");
+} else if (process.argv.includes("haiku")) {
+  closeSync(0);
+  process.stdout.write(${JSON.stringify(JSON.stringify(terminal) + "\n")});
+  process.stderr.write("Synthetic configuration rejection\\n");
+  setTimeout(() => { process.exitCode = ${agentExitCode}; }, 50);
+} else {
+  process.stdin.resume();
+  process.stdin.on("end", () => console.log(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, total_cost_usd: 0.1,
+    duration_ms: 1, structured_output: { verdict: "PASS", reason: "Healthy check completed" }
+  })));
+}
+`,
+      );
+
+      const result = space.cli([
+        "run",
+        "--base",
+        "main",
+        "--format",
+        "json",
+        "--parallel",
+        "2",
+        "--artifacts-dir",
+        artifacts,
+      ]);
+
+      assert.equal(result.status, 0, result.stderr);
+      const summary = JSON.parse(result.stdout);
+      assert.deepEqual(
+        summary.checks.map(check => check.outcome),
+        ["neutral", "pass"],
+      );
+      assert.match(summary.checks[0].error, /prompt|EPIPE|ECONNRESET/i);
+      assert.equal(summary.totals.cost, 0.35, "failed input delivery must preserve reported spend");
+      const transcript = readFileSync(
+        path.join(artifacts, "alpha-check.claude.transcript.jsonl"),
+        "utf8",
+      );
+      assert.match(transcript, /Synthetic configuration rejection/);
+      assert.match(
+        readFileSync(path.join(artifacts, "alpha-check.claude.stderr"), "utf8"),
+        /Synthetic configuration rejection/,
+      );
+    });
+  }
+
+  it("anchors findings when UTF-8 filenames span agent stdout chunks", () => {
+    const space = workspace();
+    const filename = "café-🧶.js";
+    writeFileSync(path.join(space.repo, filename), "alpha()\n");
+    const terminal =
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        total_cost_usd: 0.25,
+        structured_output: {
+          verdict: "FAIL",
+          reason: "Synthetic finding",
+          suggestions: [{ file: filename, line: 1, comment: "Avoid alpha." }],
+        },
+      }) + "\n";
+    const bytes = Buffer.from(terminal);
+    const split = bytes.indexOf(Buffer.from("🧶")) + 2;
+    writeFileSync(
+      path.join(space.root, "bin", "claude"),
+      `#!${process.execPath}
+if (!process.argv.includes("-p")) {
+  console.log("fake 0.0.0");
+} else {
+  process.stdin.resume();
+  process.stdin.on("end", () => {
+    process.stdout.write(Buffer.from(${JSON.stringify(bytes.subarray(0, split).toString("base64"))}, "base64"));
+    setTimeout(() => process.stdout.end(Buffer.from(${JSON.stringify(bytes.subarray(split).toString("base64"))}, "base64")), 50);
+  });
+}
+`,
+    );
+
+    const result = space.cli([
+      "run",
+      "--base",
+      "main",
+      "--only",
+      "alpha-check",
+      "--format",
+      "json",
+    ]);
+
+    assert.equal(result.status, 1, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.checks[0].outcome, "flagged");
+    assert.equal(summary.checks[0].suggestions[0].file, filename);
+  });
+
   it("runs only the selected checks and rejects unknown ones", () => {
     const space = workspace();
     const only = space.cli(["run", "--base", "main", "--only", "beta-check", "--format", "json"]);

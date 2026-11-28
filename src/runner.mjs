@@ -143,15 +143,44 @@ export async function runClaude({
 
     let stdout = "";
     let stderr = "";
+    let processError = null;
+    let spawnFailed = false;
+    let promptWritten = false;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", chunk => {
       stdout += chunk;
     });
     child.stderr.on("data", chunk => {
       stderr += chunk;
     });
-    child.on("error", error => resolve({ code: -1, stdout, stderr: `${stderr}${error.message}` }));
-    child.on("close", exitCode => resolve({ code: exitCode ?? -1, stdout, stderr }));
-    child.stdin.end(readFileSync(promptPath));
+    child.on("error", error => {
+      spawnFailed = true;
+      processError = error.message;
+    });
+    child.stdin.on("error", error => {
+      processError ??= `Could not send prompt to Claude CLI: ${error.message}`;
+    });
+    // close follows stdio shutdown; an input error must not discard the
+    // agent's final error event or abandon another check in the pool.
+    child.on("close", exitCode => {
+      if (!spawnFailed && !promptWritten) {
+        processError ??= "Claude CLI closed before the prompt was fully written";
+      }
+      resolve({
+        code: spawnFailed ? -1 : (exitCode ?? -1),
+        stdout,
+        stderr,
+        processError,
+      });
+    });
+    child.stdin.end(readFileSync(promptPath), error => {
+      if (error) {
+        processError ??= `Could not send prompt to Claude CLI: ${error.message}`;
+      } else {
+        promptWritten = true;
+      }
+    });
   });
 
   // Flush the transcript first; everything downstream reads from the parsed
@@ -160,7 +189,11 @@ export async function runClaude({
   const { transcript, resultEvent, sessionId } = splitStreamJson(processResult.stdout);
   writeFileSync(transcriptPath, `${transcript.join("\n")}\n`);
   writeFileSync(sessionPath, `${sessionId ?? ""}\n`);
-  writeFileSync(stderrPath, processResult.stderr);
+  const stderr =
+    processResult.processError === null ?
+      processResult.stderr
+    : `${processResult.stderr}${processResult.stderr.endsWith("\n") ? "" : "\n"}${processResult.processError}\n`;
+  writeFileSync(stderrPath, stderr);
 
   // The downstream verdict pipeline reads a single `cli` shape, which is
   // now synthesized from the terminal `result` event. Returning null when
@@ -179,7 +212,8 @@ export async function runClaude({
   }
   return {
     code: processResult.code,
-    stderr: processResult.stderr,
+    stderr,
+    processError: processResult.processError,
     sessionId,
     cli: synthesizeCli(resultEvent),
     cost,
@@ -229,7 +263,7 @@ export function synthesizeCli(resultEvent) {
 // structured_output field is usable, because parseStructuredOutput throws on a
 // malformed JSON string while the other two phases only need a structural check.
 export function decodeAgentInvocation(invocation, { label }) {
-  if (invocation.code !== 0) {
+  if (invocation.code !== 0 || invocation.processError) {
     return { ok: false, error: exitError(invocation, `${label} CLI`) };
   }
   const cli = invocation.cli;
@@ -281,15 +315,15 @@ export function decodeAgentInvocation(invocation, { label }) {
 // `result` text; only a CLI that died before emitting one falls back to the
 // bare code.
 function exitError(invocation, label = "Claude CLI") {
-  const detail =
-    typeof invocation.cli?.result === "string" && invocation.cli.result.trim() !== "" ?
-      `: ${invocation.cli.result.trim().split("\n")[0].slice(0, 200)}`
-    : "";
-  return `${label} exited ${invocation.code}${detail}`;
+  const details = [invocation.processError, invocation.cli?.result]
+    .filter(value => typeof value === "string" && value.trim() !== "")
+    .map(value => value.trim().split("\n")[0].slice(0, 200));
+  const status = invocation.code === 0 ? "process I/O failed" : `exited ${invocation.code}`;
+  return `${label} ${status}${details.length === 0 ? "" : `: ${details.join("; ")}`}`;
 }
 
 export function normalize(invocation, addedLines) {
-  if (invocation.code !== 0) {
+  if (invocation.code !== 0 || invocation.processError) {
     // A non-zero exit may still have spent tokens before the CLI terminated.
     // Read the cost the same way every other path does rather than reporting a
     // failed invocation as free.
